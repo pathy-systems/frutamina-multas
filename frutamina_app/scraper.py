@@ -4,13 +4,13 @@ import asyncio
 import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Callable
-
-import pdfplumber
-from playwright.async_api import Page, async_playwright
+from typing import TYPE_CHECKING, Callable
 
 from .config import CONFIG, DOWNLOAD_DIR, ensure_directories
 from .models import FineRecord
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 
 StatusCallback = Callable[[str], None]
@@ -58,9 +58,15 @@ async def _run_sync(callback: StatusCallback | None = None) -> list[FineRecord]:
 
     ensure_directories()
     fines: list[FineRecord] = []
+    try:
+        from playwright.async_api import async_playwright
+    except Exception as exc:
+        raise RuntimeError(
+            "Playwright nao esta instalado no servidor. Adicione a dependencia no deploy."
+        ) from exc
 
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=False)
+        browser = await playwright.chromium.launch(headless=CONFIG.playwright_headless)
         context = await browser.new_context(accept_downloads=True)
         page = await context.new_page()
 
@@ -79,7 +85,10 @@ async def _run_sync(callback: StatusCallback | None = None) -> list[FineRecord]:
                 pass
 
             if callback:
-                callback("Resolva o CAPTCHA e conclua o login no navegador aberto.")
+                if CONFIG.playwright_headless:
+                    callback("Fluxo em modo headless. Se houver CAPTCHA, a sincronizacao pode falhar no servidor.")
+                else:
+                    callback("Resolva o CAPTCHA e conclua o login no navegador aberto.")
             await page.wait_for_url(URL_DESTINO_LOGIN, timeout=180000, wait_until="networkidle")
 
             if callback:
@@ -101,7 +110,7 @@ async def _run_sync(callback: StatusCallback | None = None) -> list[FineRecord]:
     return fines
 
 
-async def _wait_modal_cycle(page: Page) -> None:
+async def _wait_modal_cycle(page: "Page") -> None:
     try:
         await page.wait_for_selector(SELECTOR_MODAL_PROCESSANDO, state="visible", timeout=10000)
     except Exception:
@@ -112,7 +121,7 @@ async def _wait_modal_cycle(page: Page) -> None:
         pass
 
 
-async def _extract_table_data(page: Page, tipo: str, callback: StatusCallback | None) -> list[FineRecord]:
+async def _extract_table_data(page: "Page", tipo: str, callback: StatusCallback | None) -> list[FineRecord]:
     nenhum_registro = page.locator(SELECTOR_NENHUM_REGISTRO, has_text="Nenhum registro encontrado.")
     try:
         if await nenhum_registro.is_visible():
@@ -166,7 +175,7 @@ async def _extract_table_data(page: Page, tipo: str, callback: StatusCallback | 
 
 
 async def _download_pdf_and_extract_value(
-    page: Page,
+    page: "Page",
     auto_infracao: str,
     pdf_path: Path,
     callback: StatusCallback | None,
@@ -195,6 +204,11 @@ async def _download_pdf_and_extract_value(
 
 
 def _extract_pdf_value(pdf_path: Path) -> Decimal:
+    try:
+        import pdfplumber
+    except Exception:
+        return Decimal("0")
+
     monetary_pattern = re.compile(r"(\d{1,3}(?:\.\d{3})*,\d{2})")
     text_parts: list[str] = []
 

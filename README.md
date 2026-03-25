@@ -61,6 +61,27 @@ $env:MOCK_SYNC = "1"
 
 Nesse modo, o botao "Ler multas agora" gera dados de exemplo.
 
+## Deploy no Railway
+
+Arquivos importantes para o deploy:
+
+- `requirements.txt`
+- `Procfile`
+
+Variaveis recomendadas no Railway:
+
+```text
+DASHBOARD_USER=admin
+DASHBOARD_PASSWORD=admin123
+MOCK_SYNC=1
+```
+
+Observacao:
+
+- para a aplicacao subir no Railway, ela precisa escutar em `0.0.0.0` e usar a variavel `PORT`; isso ja foi ajustado no projeto
+- se voce quiser ativar a leitura real da ANTT no Railway, tambem vai precisar definir `ANTT_CPF_CNPJ` e `ANTT_SENHA`
+- a leitura real pode falhar em cloud se o portal exigir CAPTCHA ou interacao visual; para o primeiro deploy, o mais seguro e usar `MOCK_SYNC=1`
+
 ## Fluxo do sistema
 
 1. O usuario entra no dashboard com login e senha do sistema.

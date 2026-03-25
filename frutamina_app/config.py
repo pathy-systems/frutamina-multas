@@ -31,13 +31,14 @@ load_dotenv()
 
 @dataclass(frozen=True)
 class AppConfig:
-    app_host: str = os.getenv("APP_HOST", "127.0.0.1")
-    app_port: int = int(os.getenv("APP_PORT", "8080"))
+    app_host: str = os.getenv("APP_HOST", os.getenv("HOST", "0.0.0.0"))
+    app_port: int = int(os.getenv("PORT", os.getenv("APP_PORT", "8080")))
     dashboard_user: str = os.getenv("DASHBOARD_USER", "admin")
     dashboard_password: str = os.getenv("DASHBOARD_PASSWORD", "admin123")
     antt_user: str = os.getenv("ANTT_CPF_CNPJ", "")
     antt_password: str = os.getenv("ANTT_SENHA", "")
     mock_sync: bool = os.getenv("MOCK_SYNC", "0") == "1"
+    playwright_headless: bool = os.getenv("PLAYWRIGHT_HEADLESS", "1") == "1"
 
 
 CONFIG = AppConfig()
