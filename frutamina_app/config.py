@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+DOWNLOAD_DIR = BASE_DIR / "downloads" / "pdfs"
+TEMPLATE_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
+
+
+def load_dotenv() -> None:
+    env_path = BASE_DIR / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_dotenv()
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    app_host: str = os.getenv("APP_HOST", "127.0.0.1")
+    app_port: int = int(os.getenv("APP_PORT", "8080"))
+    dashboard_user: str = os.getenv("DASHBOARD_USER", "admin")
+    dashboard_password: str = os.getenv("DASHBOARD_PASSWORD", "admin123")
+    antt_user: str = os.getenv("ANTT_CPF_CNPJ", "")
+    antt_password: str = os.getenv("ANTT_SENHA", "")
+    mock_sync: bool = os.getenv("MOCK_SYNC", "0") == "1"
+
+
+CONFIG = AppConfig()
+
+
+def ensure_directories() -> None:
+    for path in (DATA_DIR, DOWNLOAD_DIR, TEMPLATE_DIR, STATIC_DIR):
+        path.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div>
+        <div class="brand-mark">
+          <span class="brand-green">FRUTA</span><span class="brand-blue">MINA</span>
+        </div>
+        <p class="hero-kicker">Dashboard | multas ANTT</p>
+        <h1>Controle central de multas</h1>
+        <p class="hero-copy">
+          Consulte todas as multas ativas, acompanhe o valor total e acione a sincronizacao com o portal ANTT pelo proprio painel.
+        </p>
+      </div>
+      <div class="hero-user">
+        <span>Usuario logado</span>
+        <strong>{{ username }}</strong>
+      </div>
+    </header>
+
+    <nav class="top-nav">
+      <a class="pill pill-active" href="#dashboard">Dashboard</a>
+      <a class="pill" href="#multas">Multas</a>
+      <a class="pill" href="#resumo">Resumo</a>
+      <a class="pill" href="/logout">Sair</a>
+    </nav>
+
+    {% if mock_mode %}
+    <section class="alert alert-info">
+      Modo de exemplo ativo. Defina <code>MOCK_SYNC=0</code> e configure as credenciais ANTT para usar a leitura real.
+    </section>
+    {% endif %}
+
+    <section class="sync-banner card" id="dashboard">
+      <div>
+        <p class="eyebrow">Sincronizacao</p>
+        <h2>Atualizar multas pelo portal</h2>
+        <p class="helper-text">Ao iniciar a sincronizacao, a automacao abre o portal ANTT e atualiza os dados do dashboard.</p>
+      </div>
+      <div class="sync-actions">
+        <button id="syncButton" class="button button-primary" type="button">Ler multas agora</button>
+        <a class="button button-secondary" href="/export/csv">Exportar CSV</a>
+      </div>
+      <div class="sync-status" id="syncStatusCard">
+        <span class="status-dot" id="syncStatusDot"></span>
+        <div>
+          <strong id="syncStatusTitle">Pronto</strong>
+          <p id="syncStatusMessage">Aguardando uma nova sincronizacao.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats-grid">
+      <article class="card stat-card">
+        <span>Total de multas</span>
+        <strong id="totalFinesValue">0</strong>
+      </article>
+      <article class="card stat-card">
+        <span>Valor total</span>
+        <strong id="totalValueValue">R$ 0,00</strong>
+      </article>
+      <article class="card stat-card">
+        <span>Tipos ativos</span>
+        <strong id="activeTypesValue">0</strong>
+      </article>
+      <article class="card stat-card">
+        <span>Ultima atualizacao</span>
+        <strong id="updatedAtValue">Sem sincronizacao</strong>
+      </article>
+    </section>
+
+    <section class="card table-card" id="multas">
+      <div class="section-header">
+        <div>
+          <h2>Multas ativas</h2>
+          <p class="helper-text">Busque por auto, processo, autuado ou situacao.</p>
+        </div>
+        <div class="toolbar">
+          <label class="field">
+            <span>Pesquisar</span>
+            <input id="searchInput" type="search" placeholder="Digite para filtrar">
+          </label>
+          <label class="field">
+            <span>Tipo</span>
+            <select id="typeFilter">
+              <option value="">Todos</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="table-meta">
+        <span id="tableCount">0 multas exibidas</span>
+        <span>Dados sincronizados pelo proprio sistema</span>
+      </div>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Auto</th>
+              <th>Tipo</th>
+              <th>Processo</th>
+              <th>Situacao</th>
+              <th>Data</th>
+              <th>Valor</th>
+              <th>PDF</th>
+            </tr>
+          </thead>
+          <tbody id="finesTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="double-grid" id="resumo">
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h2>Distribuicao por tipo</h2>
+            <p class="helper-text">Entenda rapidamente onde estao concentradas as multas.</p>
+          </div>
+        </div>
+        <div id="typeCards" class="stack-list"></div>
+      </article>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h2>Maiores multas</h2>
+            <p class="helper-text">Priorize o que mais pesa no total da carteira ativa.</p>
+          </div>
+        </div>
+        <div id="topFines" class="top-fines-grid"></div>
+      </article>
+    </section>
+  </main>
+
+  <script id="initialDashboardPayload" type="application/json">{{ initial_payload_json | safe }}</script>
+  <script id="initialSyncSnapshot" type="application/json">{{ sync_snapshot_json | safe }}</script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

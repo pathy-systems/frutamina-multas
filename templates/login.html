@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-body">
+  <main class="login-layout">
+    <section class="brand-panel">
+      <div class="brand-mark">
+        <span class="brand-green">FRUTA</span><span class="brand-blue">MINA</span>
+      </div>
+      <p class="brand-kicker">Painel de multas ativas</p>
+      <h1>Uma entrada simples para consultar, acompanhar e sincronizar multas da ANTT.</h1>
+      <p class="brand-copy">
+        Entre no sistema para visualizar todas as multas ativas em um dashboard unico e iniciar a leitura automatica do portal.
+      </p>
+      <div class="brand-chips">
+        <span>Login seguro</span>
+        <span>Dashboard executivo</span>
+        <span>Sincronizacao via site</span>
+      </div>
+    </section>
+
+    <section class="login-panel">
+      <div class="card login-card">
+        <p class="eyebrow">Acesso interno</p>
+        <h2>Entrar</h2>
+        <p class="helper-text">Use o usuario e senha do dashboard configurados no ambiente.</p>
+        {% if error_message %}
+        <div class="alert alert-error">{{ error_message }}</div>
+        {% endif %}
+        <form class="login-form" method="post" action="/login">
+          <label for="username">Usuario</label>
+          <input id="username" name="username" type="text" autocomplete="username" required>
+
+          <label for="password">Senha</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+          <button class="button button-primary" type="submit">Entrar no dashboard</button>
+        </form>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
