@@ -306,6 +306,19 @@ class FineStore:
                 cur.execute("SELECT 1 FROM pdf_documents WHERE name = %s", (normalized,))
                 return cur.fetchone() is not None
 
+    def available_pdf_names(self) -> set[str]:
+        names = {file_path.name for file_path in DOWNLOAD_DIR.glob("*.pdf")}
+        if not self.uses_database:
+            return names
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM pdf_documents")
+                rows = cur.fetchall()
+
+        names.update(str(row["name"]) for row in rows)
+        return names
+
     def read_pdf(self, filename: str) -> tuple[bytes, str] | None:
         normalized = _normalize_pdf_name(filename)
         if not normalized:
@@ -422,6 +435,7 @@ class FineStore:
 
     def build_dashboard_payload(self) -> dict[str, object]:
         fines = self.load()
+        pdf_names = self.available_pdf_names()
         fines_com_valor = [fine for fine in fines if fine.valor_disponivel]
         total_valor = sum((fine.valor_multa for fine in fines_com_valor), Decimal("0"))
         tipos: dict[str, int] = {}
@@ -468,7 +482,7 @@ class FineStore:
                     "fonteValor": fine.fonte_valor,
                     "pdfNome": fine.pdf_nome,
                     "pdfUrl": f"/downloads/{fine.pdf_nome}"
-                    if fine.pdf_nome and self.has_pdf(fine.pdf_nome)
+                    if fine.pdf_nome and _normalize_pdf_name(fine.pdf_nome) in pdf_names
                     else "",
                 }
                 for fine in fines
