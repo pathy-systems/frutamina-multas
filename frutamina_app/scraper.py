@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
@@ -14,6 +15,16 @@ if TYPE_CHECKING:
 
 
 StatusCallback = Callable[[str], None]
+
+
+@dataclass
+class BoletoExtractionResult:
+    valor: Decimal
+    boleto_disponivel: bool
+    valor_disponivel: bool
+    mensagem: str
+    fonte_valor: str = ""
+    divida_quitada: bool = False
 
 URL_LOGIN = "https://appweb1.antt.gov.br/spmi/Site/Login.aspx?ReturnUrl=%2fspmi%2fSite%2fBoleto%2fListar.aspx"
 URL_DESTINO_LOGIN = "**/*Default.aspx"
@@ -153,10 +164,19 @@ async def _extract_table_data(page: "Page", tipo: str, callback: StatusCallback 
 
         pdf_name = auto.replace("/", "_").replace("\\", "_") + ".pdf" if auto else ""
         pdf_path = DOWNLOAD_DIR / pdf_name if pdf_name else Path()
-        valor = Decimal("0")
+        boleto = BoletoExtractionResult(
+            valor=Decimal("0"),
+            boleto_disponivel=False,
+            valor_disponivel=False,
+            mensagem="Boleto e valor ainda nao estao disponiveis",
+        )
 
         if pdf_name:
-            valor = await _download_pdf_and_extract_value(page, auto, pdf_path, callback)
+            boleto = await _download_pdf_and_extract_value(page, auto, pdf_path, callback)
+            if boleto.divida_quitada:
+                if callback:
+                    callback(f"Auto {auto} ignorado porque o PDF indica divida quitada.")
+                continue
 
         fines.append(
             FineRecord(
@@ -166,8 +186,12 @@ async def _extract_table_data(page: "Page", tipo: str, callback: StatusCallback 
                 autuado=autuado,
                 situacao=situacao,
                 data_auto=data_auto,
-                valor_multa=valor,
+                valor_multa=boleto.valor,
                 pdf_nome=pdf_name if pdf_name and pdf_path.exists() else "",
+                boleto_disponivel=boleto.boleto_disponivel,
+                valor_disponivel=boleto.valor_disponivel,
+                mensagem_valor=boleto.mensagem,
+                fonte_valor=boleto.fonte_valor,
             )
         )
 
@@ -179,7 +203,7 @@ async def _download_pdf_and_extract_value(
     auto_infracao: str,
     pdf_path: Path,
     callback: StatusCallback | None,
-) -> Decimal:
+) -> BoletoExtractionResult:
     if pdf_path.exists():
         return _extract_pdf_value(pdf_path)
 
@@ -198,42 +222,202 @@ async def _download_pdf_and_extract_value(
     except Exception:
         if callback:
             callback(f"Nao foi possivel baixar o PDF de {auto_infracao}.")
-        return Decimal("0")
+        return BoletoExtractionResult(
+            valor=Decimal("0"),
+            boleto_disponivel=False,
+            valor_disponivel=False,
+            mensagem="Boleto e valor ainda nao estao disponiveis",
+        )
 
     return _extract_pdf_value(pdf_path)
 
 
-def _extract_pdf_value(pdf_path: Path) -> Decimal:
+def _extract_pdf_value(pdf_path: Path) -> BoletoExtractionResult:
     try:
         import pdfplumber
     except Exception:
-        return Decimal("0")
+        return BoletoExtractionResult(
+            valor=Decimal("0"),
+            boleto_disponivel=False,
+            valor_disponivel=False,
+            mensagem="Nao foi possivel processar o PDF do boleto",
+        )
 
-    monetary_pattern = re.compile(r"(\d{1,3}(?:\.\d{3})*,\d{2})")
-    text_parts: list[str] = []
+    page_texts: list[str] = []
 
     try:
         with pdfplumber.open(str(pdf_path)) as pdf:
             for page in pdf.pages:
-                page_text = page.extract_text() or ""
-                if page_text:
-                    text_parts.append(page_text.upper())
+                for extracted in (page.extract_text(layout=True), page.extract_text()):
+                    if not extracted:
+                        continue
+                    normalized = _normalize_pdf_text(extracted)
+                    if normalized:
+                        page_texts.append(normalized)
     except Exception:
-        return Decimal("0")
+        return BoletoExtractionResult(
+            valor=Decimal("0"),
+            boleto_disponivel=False,
+            valor_disponivel=False,
+            mensagem="Nao foi possivel ler o PDF do boleto",
+        )
 
-    full_text = "\n".join(text_parts)
-    matches = monetary_pattern.findall(full_text)
-    values: list[Decimal] = []
-    for match in matches:
-        normalized = match.replace(".", "").replace(",", ".")
-        try:
-            value = Decimal(normalized)
-        except (InvalidOperation, ValueError):
+    full_text = "\n".join(page_texts)
+    if _is_paid_debt_pdf(full_text):
+        return BoletoExtractionResult(
+            valor=Decimal("0"),
+            boleto_disponivel=True,
+            valor_disponivel=False,
+            mensagem="Divida quitada identificada no PDF",
+            fonte_valor="quitada",
+            divida_quitada=True,
+        )
+
+    has_boleto = _has_boleto_markers(full_text)
+    if not has_boleto:
+        return BoletoExtractionResult(
+            valor=Decimal("0"),
+            boleto_disponivel=False,
+            valor_disponivel=False,
+            mensagem="Boleto e valor ainda nao estao disponiveis",
+        )
+
+    value = None
+    for page_text in page_texts:
+        if not _has_boleto_markers(page_text):
             continue
-        if value >= Decimal("10"):
-            values.append(value)
+        if _is_paid_debt_pdf(page_text):
+            return BoletoExtractionResult(
+                valor=Decimal("0"),
+                boleto_disponivel=True,
+                valor_disponivel=False,
+                mensagem="Divida quitada identificada no PDF",
+                fonte_valor="quitada",
+                divida_quitada=True,
+            )
+        value = _extract_boleto_document_value(page_text)
+        if value is not None:
+            break
 
-    return max(values) if values else Decimal("0")
+    if value is None:
+        value = _extract_boleto_document_value(full_text)
+
+    if value is None:
+        return BoletoExtractionResult(
+            valor=Decimal("0"),
+            boleto_disponivel=True,
+            valor_disponivel=False,
+            mensagem="Boleto disponivel, mas o valor do documento nao foi encontrado",
+            fonte_valor="boleto",
+        )
+
+    return BoletoExtractionResult(
+        valor=value,
+        boleto_disponivel=True,
+        valor_disponivel=True,
+        mensagem="Valor do documento do boleto encontrado",
+        fonte_valor="valor_do_documento",
+    )
+
+
+def _extract_boleto_document_value(full_text: str) -> Decimal | None:
+    normalized_text = _normalize_pdf_text(full_text)
+    patterns = [
+        r"VALOR\s+DO\s+DOCUMENTO[\s:.-]*R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+        r"VALOR\s+DOCUMENTO[\s:.-]*R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+        r"1\s*-\s*\(\+\)\s*VALOR\s+DO\s+DOCUMENTO[\s:.-]*R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+        r"1\s*-\s*\(\+\)\s*VALOR\s+DOCUMENTO[\s:.-]*R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+        r"(\d{1,3}(?:\.\d{3})*,\d{2})[\s:.-]*1\s*-\s*\(\+\)\s*VALOR\s+DO\s+DOCUMENTO",
+        r"(\d{1,3}(?:\.\d{3})*,\d{2})[\s:.-]*1\s*-\s*\(\+\)\s*VALOR\s+DOCUMENTO",
+        r"QUANTIDADE\s+VALOR[\s:.-]*R?\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, normalized_text, flags=re.IGNORECASE | re.MULTILINE)
+        if not match:
+            continue
+        value = _parse_boleto_amount(match.group(1))
+        if value is not None:
+            return value
+
+    line_candidates = [
+        line.strip()
+        for line in normalized_text.splitlines()
+        if "VALOR DO DOCUMENTO" in line or "VALOR DOCUMENTO" in line or "QUANTIDADE VALOR" in line
+    ]
+    for line in line_candidates:
+        amount_match = re.search(r"(\d{1,3}(?:\.\d{3})*,\d{2})", line)
+        if not amount_match:
+            continue
+        value = _parse_boleto_amount(amount_match.group(1))
+        if value is not None:
+            return value
+
+    window_pattern = re.compile(
+        r"(?:VALOR\s+(?:DO\s+)?DOCUMENTO|QUANTIDADE\s+VALOR)(.{0,160})",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for match in window_pattern.finditer(normalized_text):
+        window = match.group(1)
+        amount_match = re.search(r"(\d{1,3}(?:\.\d{3})*,\d{2})", window)
+        if not amount_match:
+            continue
+        value = _parse_boleto_amount(amount_match.group(1))
+        if value is not None:
+            return value
+
+    return None
+
+
+def _has_boleto_markers(full_text: str) -> bool:
+    boleto_markers = [
+        "BANCO DO BRASIL",
+        "GRU - COBRANCA",
+        "GRU COBRANCA",
+        "VALOR DO DOCUMENTO",
+        "VALOR DOCUMENTO",
+        "LINHA DIGITAVEL",
+        "PAGAVEL EM QUALQUER BANCO",
+    ]
+    return any(marker in full_text for marker in boleto_markers)
+
+
+def _is_paid_debt_pdf(full_text: str) -> bool:
+    if "QUITADA" not in full_text:
+        return False
+
+    paid_markers = [
+        "SITUACAO DA DIVIDA",
+        "DADOS REFERENTES AOS PAGAMENTOS REALIZADOS",
+        "DATA DE PAGAMENTO",
+        "SALDO DO PAGAMENTO",
+        "QUANTIDADE DE PAGAMENTOS REALIZADOS",
+    ]
+    has_payment_context = any(marker in full_text for marker in paid_markers)
+    if not has_payment_context:
+        return False
+
+    if re.search(r"SITUACAO\s+DA\s+DIVIDA[\s:.-]*QUITADA", full_text, flags=re.IGNORECASE):
+        return True
+
+    if re.search(r"SITUACAO[\s:.-]*QUITADA", full_text, flags=re.IGNORECASE) and "SALDO DO PAGAMENTO" in full_text:
+        return True
+
+    return False
+
+
+def _normalize_pdf_text(value: str) -> str:
+    normalized_lines = [" ".join(line.upper().split()) for line in value.splitlines()]
+    return "\n".join(line for line in normalized_lines if line)
+
+
+def _parse_boleto_amount(value: str) -> Decimal | None:
+    normalized = (value or "").replace(".", "").replace(",", ".").strip()
+    try:
+        parsed = Decimal(normalized)
+    except (InvalidOperation, ValueError):
+        return None
+    return parsed if parsed > Decimal("0") else None
 
 
 def _mock_fines() -> list[FineRecord]:
@@ -246,6 +430,10 @@ def _mock_fines() -> list[FineRecord]:
             situacao="Notificacao de penalidade emitida",
             data_auto="18/03/2026",
             valor_multa=Decimal("195.23"),
+            boleto_disponivel=True,
+            valor_disponivel=True,
+            mensagem_valor="Valor do documento do boleto encontrado",
+            fonte_valor="valor_do_documento",
         ),
         FineRecord(
             tipo_fiscalizacao="Infraestrutura Rodoviaria",
@@ -254,6 +442,9 @@ def _mock_fines() -> list[FineRecord]:
             autuado="FRUTAMINA - COMERCIAL AGRICOLA LTDA.",
             situacao="Processo em andamento",
             data_auto="22/03/2026",
-            valor_multa=Decimal("850.00"),
+            valor_multa=Decimal("0"),
+            boleto_disponivel=False,
+            valor_disponivel=False,
+            mensagem_valor="Boleto e valor ainda nao estao disponiveis",
         ),
     ]

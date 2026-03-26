@@ -32,7 +32,14 @@
   }
 
   let payload = parseJsonScript("initialDashboardPayload", {
-    summary: { total_fines: 0, total_value: "R$ 0,00", active_types: 0, updated_at: "Sem sincronizacao" },
+    summary: {
+      total_fines: 0,
+      total_value: "R$ 0,00",
+      available_boleto_count: 0,
+      pending_boleto_count: 0,
+      active_types: 0,
+      updated_at: "Sem sincronizacao"
+    },
     type_counts: [],
     top_fines: [],
     fines: []
@@ -61,6 +68,7 @@
   function updateSummary() {
     byId("totalFinesValue").textContent = payload.summary.total_fines;
     byId("totalValueValue").textContent = payload.summary.total_value;
+    byId("totalValueHint").textContent = `${payload.summary.available_boleto_count || 0} boleto(s) com valor encontrado`;
     byId("activeTypesValue").textContent = payload.summary.active_types;
     byId("updatedAtValue").textContent = payload.summary.updated_at;
   }
@@ -113,6 +121,20 @@
       const pdf = item.pdfUrl
         ? `<a class="pdf-link" href="${escapeHtml(item.pdfUrl)}" target="_blank" rel="noreferrer">Abrir PDF</a>`
         : `<span class="pdf-link pdf-link-disabled">Sem PDF</span>`;
+      const valueCell = item.valorDisponivel
+        ? `
+          <div class="value-cell">
+            <strong>${escapeHtml(item.valor)}</strong>
+            <span class="cell-muted">Valor do documento</span>
+          </div>
+        `
+        : `
+          <div class="value-cell">
+            <span class="value-pill ${item.boletoDisponivel ? "value-pill-warning" : "value-pill-muted"}">
+              ${escapeHtml(item.mensagemValor || "Boleto e valor ainda nao estao disponiveis")}
+            </span>
+          </div>
+        `;
 
       return `
         <tr>
@@ -126,7 +148,7 @@
           <td>${escapeHtml(item.processo)}</td>
           <td><span class="badge">${escapeHtml(item.situacao)}</span></td>
           <td>${escapeHtml(item.dataAuto)}</td>
-          <td>${escapeHtml(item.valor)}</td>
+          <td>${valueCell}</td>
           <td>${pdf}</td>
         </tr>
       `;
@@ -155,7 +177,7 @@
   function renderTopFines() {
     const root = byId("topFines");
     if (!payload.top_fines.length) {
-      root.innerHTML = '<div class="empty-state">Nenhuma multa em destaque ainda.</div>';
+      root.innerHTML = '<div class="empty-state">Nenhum boleto com valor encontrado ainda.</div>';
       return;
     }
 

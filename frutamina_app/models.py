@@ -16,6 +16,10 @@ class FineRecord:
     valor_multa: Decimal
     pdf_nome: str = ""
     fonte: str = "ANTT"
+    boleto_disponivel: bool = False
+    valor_disponivel: bool = False
+    mensagem_valor: str = "Boleto e valor ainda nao estao disponiveis"
+    fonte_valor: str = ""
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -24,6 +28,25 @@ class FineRecord:
 
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> "FineRecord":
+        valor_multa = Decimal(str(payload.get("valor_multa", "0")))
+        pdf_nome = str(payload.get("pdf_nome", ""))
+        raw_boleto_disponivel = payload.get("boleto_disponivel")
+        raw_valor_disponivel = payload.get("valor_disponivel")
+        valor_disponivel = (
+            bool(raw_valor_disponivel)
+            if raw_valor_disponivel is not None
+            else valor_multa > Decimal("0")
+        )
+        boleto_disponivel = (
+            bool(raw_boleto_disponivel)
+            if raw_boleto_disponivel is not None
+            else bool(pdf_nome) or valor_disponivel
+        )
+        mensagem_padrao = (
+            "Valor do boleto encontrado"
+            if valor_disponivel
+            else "Boleto e valor ainda nao estao disponiveis"
+        )
         return cls(
             tipo_fiscalizacao=str(payload.get("tipo_fiscalizacao", "")),
             auto_infracao=str(payload.get("auto_infracao", "")),
@@ -31,9 +54,13 @@ class FineRecord:
             autuado=str(payload.get("autuado", "")),
             situacao=str(payload.get("situacao", "")),
             data_auto=str(payload.get("data_auto", "")),
-            valor_multa=Decimal(str(payload.get("valor_multa", "0"))),
-            pdf_nome=str(payload.get("pdf_nome", "")),
+            valor_multa=valor_multa,
+            pdf_nome=pdf_nome,
             fonte=str(payload.get("fonte", "ANTT")),
+            boleto_disponivel=boleto_disponivel,
+            valor_disponivel=valor_disponivel,
+            mensagem_valor=str(payload.get("mensagem_valor") or mensagem_padrao),
+            fonte_valor=str(payload.get("fonte_valor", "")),
         )
 
 

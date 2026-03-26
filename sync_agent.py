@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
-from frutamina_app.config import CONFIG
+from frutamina_app.config import CONFIG, DOWNLOAD_DIR
 from frutamina_app.scraper import run_sync
 
 
@@ -46,13 +48,44 @@ def _send_progress(job_id: str, message: str) -> None:
     )
 
 
-def _send_complete(job_id: str, fines_payload: list[dict[str, Any]], message: str) -> None:
+def _collect_pdf_documents(fines_payload: list[dict[str, Any]]) -> list[dict[str, str]]:
+    documents: list[dict[str, str]] = []
+    seen_names: set[str] = set()
+
+    for fine in fines_payload:
+        name = Path(str(fine.get("pdf_nome", ""))).name
+        if not name or name in seen_names:
+            continue
+
+        file_path = DOWNLOAD_DIR / name
+        if not file_path.exists():
+            continue
+
+        seen_names.add(name)
+        documents.append(
+            {
+                "name": name,
+                "content_type": "application/pdf",
+                "content_base64": base64.b64encode(file_path.read_bytes()).decode("ascii"),
+            }
+        )
+
+    return documents
+
+
+def _send_complete(
+    job_id: str,
+    fines_payload: list[dict[str, Any]],
+    pdf_documents: list[dict[str, str]],
+    message: str,
+) -> None:
     _post_json(
         f"{CONFIG.agent_server_url}/api/agent/jobs/{job_id}/complete",
         {
             "agent_name": CONFIG.sync_agent_name,
             "message": message,
             "fines": fines_payload,
+            "pdf_documents": pdf_documents,
         },
     )
 
@@ -94,9 +127,11 @@ def process_single_job() -> bool:
 
     try:
         fines = run_sync(progress)
+        fines_payload = [fine.to_dict() for fine in fines]
         _send_complete(
             job_id,
-            [fine.to_dict() for fine in fines],
+            fines_payload,
+            _collect_pdf_documents(fines_payload),
             f"Leitura concluida pelo agente {CONFIG.sync_agent_name}.",
         )
         print(f"Job finalizado com sucesso. Total de multas: {len(fines)}")

@@ -226,14 +226,14 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
 
             filename = Path(unquote(route.removeprefix("/downloads/"))).name
-            file_path = (_store.downloads_dir() / filename).resolve()
-            if not file_path.exists() or file_path.parent != _store.downloads_dir().resolve():
+            pdf_payload = _store.read_pdf(filename)
+            if not pdf_payload:
                 self.send_error(HTTPStatus.NOT_FOUND, "Arquivo nao encontrado.")
                 return
 
-            payload = file_path.read_bytes()
+            payload, content_type = pdf_payload
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Disposition", f'inline; filename="{filename}"')
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -332,7 +332,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             agent_name = str(payload.get("agent_name") or CONFIG.sync_agent_name)
             fines = [FineRecord.from_dict(item) for item in payload.get("fines", [])]
             message = str(payload.get("message") or f"Leitura concluida pelo agente {agent_name}.")
-            _store.complete_job(job_id, fines, agent_name, message)
+            pdf_documents = payload.get("pdf_documents", [])
+            _store.complete_job(job_id, fines, agent_name, message, pdf_documents=pdf_documents)
             _send_json(self, {"ok": True, "total_fines": len(fines)})
             return
 

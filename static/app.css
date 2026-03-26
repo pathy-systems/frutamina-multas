@@ -314,6 +314,13 @@ select:focus {
   font-size: clamp(1.45rem, 2vw, 2rem);
 }
 
+.stat-hint {
+  display: block;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .table-card,
 .double-grid .card {
   padding: 26px;
@@ -379,6 +386,11 @@ th {
   gap: 6px;
 }
 
+.value-cell {
+  display: grid;
+  gap: 6px;
+}
+
 .cell-muted {
   color: var(--muted);
   font-size: 0.9rem;
@@ -403,6 +415,26 @@ th {
   text-decoration: none;
   background: rgba(47, 103, 246, 0.12);
   color: #1748b9;
+}
+
+.value-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.value-pill-warning {
+  background: rgba(255, 182, 72, 0.18);
+  color: #8a5a00;
+}
+
+.value-pill-muted {
+  background: rgba(95, 110, 134, 0.12);
+  color: var(--muted);
 }
 
 .pdf-link-disabled {

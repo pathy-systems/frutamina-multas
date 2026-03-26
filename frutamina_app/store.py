@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import csv
 import io
 import json
@@ -43,6 +45,10 @@ def _default_snapshot() -> dict[str, object]:
     return SyncSnapshot().to_dict()
 
 
+def _normalize_pdf_name(value: str) -> str:
+    return Path(value or "").name
+
+
 class FineStore:
     def __init__(self) -> None:
         ensure_directories()
@@ -84,7 +90,30 @@ class FineStore:
                         data_auto TEXT NOT NULL DEFAULT '',
                         valor_multa NUMERIC(14, 2) NOT NULL DEFAULT 0,
                         pdf_nome TEXT NOT NULL DEFAULT '',
+                        boleto_disponivel BOOLEAN NOT NULL DEFAULT FALSE,
+                        valor_disponivel BOOLEAN NOT NULL DEFAULT FALSE,
+                        mensagem_valor TEXT NOT NULL DEFAULT 'Boleto e valor ainda nao estao disponiveis',
+                        fonte_valor TEXT NOT NULL DEFAULT '',
                         fonte TEXT NOT NULL DEFAULT 'ANTT',
+                        updated_at TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS boleto_disponivel BOOLEAN NOT NULL DEFAULT FALSE")
+                cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS valor_disponivel BOOLEAN NOT NULL DEFAULT FALSE")
+                cur.execute(
+                    """
+                    ALTER TABLE fines
+                    ADD COLUMN IF NOT EXISTS mensagem_valor TEXT NOT NULL DEFAULT 'Boleto e valor ainda nao estao disponiveis'
+                    """
+                )
+                cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS fonte_valor TEXT NOT NULL DEFAULT ''")
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS pdf_documents (
+                        name TEXT PRIMARY KEY,
+                        content BYTEA NOT NULL,
+                        content_type TEXT NOT NULL DEFAULT 'application/pdf',
                         updated_at TEXT NOT NULL DEFAULT ''
                     )
                     """
@@ -134,7 +163,8 @@ class FineStore:
                     cur.execute(
                         """
                         SELECT tipo_fiscalizacao, auto_infracao, numero_processo, autuado, situacao, data_auto,
-                               valor_multa, pdf_nome, fonte
+                               valor_multa, pdf_nome, boleto_disponivel, valor_disponivel, mensagem_valor,
+                               fonte_valor, fonte
                         FROM fines
                         ORDER BY tipo_fiscalizacao, auto_infracao
                         """
@@ -150,6 +180,17 @@ class FineStore:
                     data_auto=row["data_auto"],
                     valor_multa=Decimal(str(row["valor_multa"])),
                     pdf_nome=row["pdf_nome"],
+                    boleto_disponivel=bool(row.get("boleto_disponivel", False) or row["pdf_nome"]),
+                    valor_disponivel=bool(
+                        row.get("valor_disponivel", False) or Decimal(str(row["valor_multa"])) > Decimal("0")
+                    ),
+                    mensagem_valor=row.get("mensagem_valor")
+                    or (
+                        "Valor do boleto encontrado"
+                        if Decimal(str(row["valor_multa"])) > Decimal("0")
+                        else "Boleto e valor ainda nao estao disponiveis"
+                    ),
+                    fonte_valor=row.get("fonte_valor", ""),
                     fonte=row["fonte"],
                 )
                 for row in rows
@@ -170,14 +211,129 @@ class FineStore:
                         autuado=row.get("Autuado", ""),
                         situacao=row.get("Situacao", ""),
                         data_auto=row.get("Data do Auto", ""),
-                        valor_multa=_parse_decimal(row.get("Valor da Multa", "")),
+                        valor_multa=_parse_decimal(row.get("Valor do Boleto", row.get("Valor da Multa", ""))),
                         pdf_nome=row.get("PDF", ""),
+                        boleto_disponivel=(row.get("Boleto Disponivel", "").strip().lower() == "sim")
+                        if row.get("Boleto Disponivel") is not None
+                        else bool(row.get("PDF", "")),
+                        valor_disponivel=(row.get("Valor Disponivel", "").strip().lower() == "sim")
+                        if row.get("Valor Disponivel") is not None
+                        else _parse_decimal(row.get("Valor do Boleto", row.get("Valor da Multa", ""))) > Decimal("0"),
+                        mensagem_valor=row.get("Mensagem do Boleto")
+                        or (
+                            "Valor do boleto encontrado"
+                            if _parse_decimal(row.get("Valor do Boleto", row.get("Valor da Multa", ""))) > Decimal("0")
+                            else "Boleto e valor ainda nao estao disponiveis"
+                        ),
+                        fonte_valor=row.get("Fonte do Valor", ""),
                     )
                     for row in reader
                 ]
         return []
 
-    def save(self, fines: list[FineRecord]) -> None:
+    def _prepare_pdf_documents(self, pdf_documents: list[dict[str, object]] | None) -> list[dict[str, object]]:
+        prepared: list[dict[str, object]] = []
+        for item in pdf_documents or []:
+            name = _normalize_pdf_name(str(item.get("name", "")))
+            encoded = str(item.get("content_base64", ""))
+            if not name or not encoded:
+                continue
+            try:
+                content = base64.b64decode(encoded, validate=True)
+            except (ValueError, binascii.Error):
+                continue
+            if not content:
+                continue
+            prepared.append(
+                {
+                    "name": name,
+                    "content": content,
+                    "content_type": str(item.get("content_type") or "application/pdf"),
+                }
+            )
+        return prepared
+
+    def _sync_database_pdfs(self, valid_names: set[str], pdf_documents: list[dict[str, object]]) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                if valid_names:
+                    cur.execute("DELETE FROM pdf_documents WHERE NOT (name = ANY(%s))", (sorted(valid_names),))
+                else:
+                    cur.execute("DELETE FROM pdf_documents")
+
+                for document in pdf_documents:
+                    cur.execute(
+                        """
+                        INSERT INTO pdf_documents (name, content, content_type, updated_at)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (name) DO UPDATE
+                        SET content = EXCLUDED.content,
+                            content_type = EXCLUDED.content_type,
+                            updated_at = EXCLUDED.updated_at
+                        """,
+                        (
+                            document["name"],
+                            document["content"],
+                            document["content_type"],
+                            _now_label(),
+                        ),
+                    )
+            conn.commit()
+
+    def _sync_local_pdfs(self, valid_names: set[str], pdf_documents: list[dict[str, object]] | None) -> None:
+        ensure_directories()
+        for file_path in DOWNLOAD_DIR.glob("*.pdf"):
+            if file_path.name not in valid_names:
+                file_path.unlink(missing_ok=True)
+
+        for document in pdf_documents or []:
+            file_path = DOWNLOAD_DIR / str(document["name"])
+            file_path.write_bytes(bytes(document["content"]))
+
+    def has_pdf(self, filename: str) -> bool:
+        normalized = _normalize_pdf_name(filename)
+        if not normalized:
+            return False
+
+        if (DOWNLOAD_DIR / normalized).exists():
+            return True
+
+        if not self.uses_database:
+            return False
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pdf_documents WHERE name = %s", (normalized,))
+                return cur.fetchone() is not None
+
+    def read_pdf(self, filename: str) -> tuple[bytes, str] | None:
+        normalized = _normalize_pdf_name(filename)
+        if not normalized:
+            return None
+
+        local_path = DOWNLOAD_DIR / normalized
+        if local_path.exists():
+            return local_path.read_bytes(), "application/pdf"
+
+        if not self.uses_database:
+            return None
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT content, content_type FROM pdf_documents WHERE name = %s",
+                    (normalized,),
+                )
+                row = cur.fetchone()
+
+        if not row:
+            return None
+        return bytes(row["content"]), str(row.get("content_type") or "application/pdf")
+
+    def save(self, fines: list[FineRecord], pdf_documents: list[dict[str, object]] | None = None) -> None:
+        valid_pdf_names = {_normalize_pdf_name(fine.pdf_nome) for fine in fines if fine.pdf_nome}
+        prepared_pdf_documents = self._prepare_pdf_documents(pdf_documents)
+
         if self.uses_database:
             with self._connect() as conn:
                 with conn.cursor() as cur:
@@ -188,9 +344,10 @@ class FineStore:
                             """
                             INSERT INTO fines (
                                 auto_infracao, tipo_fiscalizacao, numero_processo, autuado, situacao,
-                                data_auto, valor_multa, pdf_nome, fonte, updated_at
+                                data_auto, valor_multa, pdf_nome, boleto_disponivel, valor_disponivel,
+                                mensagem_valor, fonte_valor, fonte, updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 fine.auto_infracao,
@@ -201,11 +358,17 @@ class FineStore:
                                 fine.data_auto,
                                 str(fine.valor_multa),
                                 fine.pdf_nome,
+                                fine.boleto_disponivel,
+                                fine.valor_disponivel,
+                                fine.mensagem_valor,
+                                fine.fonte_valor,
                                 fine.fonte,
                                 now,
                             ),
                         )
                 conn.commit()
+            if pdf_documents is not None:
+                self._sync_database_pdfs(valid_pdf_names, prepared_pdf_documents)
             return
 
         ensure_directories()
@@ -214,6 +377,7 @@ class FineStore:
             encoding="utf-8",
         )
         CSV_PATH.write_bytes(self.build_csv_bytes(fines))
+        self._sync_local_pdfs(valid_pdf_names, prepared_pdf_documents)
 
     def build_csv_bytes(self, fines: list[FineRecord] | None = None) -> bytes:
         fines = fines if fines is not None else self.load()
@@ -227,7 +391,11 @@ class FineStore:
                 "Autuado",
                 "Situacao",
                 "Data do Auto",
-                "Valor da Multa",
+                "Valor do Boleto",
+                "Boleto Disponivel",
+                "Valor Disponivel",
+                "Mensagem do Boleto",
+                "Fonte do Valor",
                 "PDF",
             ],
             delimiter=";",
@@ -242,7 +410,11 @@ class FineStore:
                     "Autuado": fine.autuado,
                     "Situacao": fine.situacao,
                     "Data do Auto": fine.data_auto,
-                    "Valor da Multa": _format_brl(fine.valor_multa),
+                    "Valor do Boleto": _format_brl(fine.valor_multa) if fine.valor_disponivel else "",
+                    "Boleto Disponivel": "Sim" if fine.boleto_disponivel else "Nao",
+                    "Valor Disponivel": "Sim" if fine.valor_disponivel else "Nao",
+                    "Mensagem do Boleto": fine.mensagem_valor,
+                    "Fonte do Valor": fine.fonte_valor,
                     "PDF": fine.pdf_nome,
                 }
             )
@@ -250,18 +422,21 @@ class FineStore:
 
     def build_dashboard_payload(self) -> dict[str, object]:
         fines = self.load()
-        total_valor = sum((fine.valor_multa for fine in fines), Decimal("0"))
+        fines_com_valor = [fine for fine in fines if fine.valor_disponivel]
+        total_valor = sum((fine.valor_multa for fine in fines_com_valor), Decimal("0"))
         tipos: dict[str, int] = {}
         for fine in fines:
             tipos[fine.tipo_fiscalizacao] = tipos.get(fine.tipo_fiscalizacao, 0) + 1
 
-        top_items = sorted(fines, key=lambda item: item.valor_multa, reverse=True)[:5]
+        top_items = sorted(fines_com_valor, key=lambda item: item.valor_multa, reverse=True)[:5]
         updated_at = self.get_sync_snapshot().get("last_success_at") or self.last_updated_label()
 
         return {
             "summary": {
                 "total_fines": len(fines),
                 "total_value": _format_brl(total_valor),
+                "available_boleto_count": len(fines_com_valor),
+                "pending_boleto_count": len(fines) - len(fines_com_valor),
                 "active_types": len(tipos),
                 "updated_at": updated_at or "Sem sincronizacao ainda",
             },
@@ -286,10 +461,14 @@ class FineStore:
                     "autuado": fine.autuado,
                     "situacao": fine.situacao,
                     "dataAuto": fine.data_auto,
-                    "valor": _format_brl(fine.valor_multa),
+                    "valor": _format_brl(fine.valor_multa) if fine.valor_disponivel else "",
+                    "valorDisponivel": fine.valor_disponivel,
+                    "boletoDisponivel": fine.boleto_disponivel,
+                    "mensagemValor": fine.mensagem_valor,
+                    "fonteValor": fine.fonte_valor,
                     "pdfNome": fine.pdf_nome,
                     "pdfUrl": f"/downloads/{fine.pdf_nome}"
-                    if fine.pdf_nome and (DOWNLOAD_DIR / fine.pdf_nome).exists()
+                    if fine.pdf_nome and self.has_pdf(fine.pdf_nome)
                     else "",
                 }
                 for fine in fines
@@ -525,8 +704,15 @@ class FineStore:
         snapshot["message"] = message
         self._save_sync_snapshot(snapshot)
 
-    def complete_job(self, job_id: str, fines: list[FineRecord], agent_name: str, message: str = "") -> None:
-        self.save(fines)
+    def complete_job(
+        self,
+        job_id: str,
+        fines: list[FineRecord],
+        agent_name: str,
+        message: str = "",
+        pdf_documents: list[dict[str, object]] | None = None,
+    ) -> None:
+        self.save(fines, pdf_documents=pdf_documents)
         finished_at = _now_label()
         final_message = message or f"Leitura concluida pelo agente {agent_name}."
 
