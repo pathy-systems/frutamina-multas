@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -389,8 +390,11 @@ def _is_paid_debt_pdf(full_text: str) -> bool:
     paid_markers = [
         "SITUACAO DA DIVIDA",
         "DADOS REFERENTES AOS PAGAMENTOS REALIZADOS",
+        "EXTRATO DE PAGAMENTOS",
         "DATA DE PAGAMENTO",
         "SALDO DO PAGAMENTO",
+        "SALDO RESIDUAL",
+        "SALDO CORRIGIDO PARA PAGAMENTO",
         "QUANTIDADE DE PAGAMENTOS REALIZADOS",
     ]
     has_payment_context = any(marker in full_text for marker in paid_markers)
@@ -403,11 +407,19 @@ def _is_paid_debt_pdf(full_text: str) -> bool:
     if re.search(r"SITUACAO[\s:.-]*QUITADA", full_text, flags=re.IGNORECASE) and "SALDO DO PAGAMENTO" in full_text:
         return True
 
+    if "QUITADA" in full_text and ("SALDO RESIDUAL" in full_text or "QUANTIDADE DE PAGAMENTOS REALIZADOS" in full_text):
+        return True
+
+    if re.search(r"SALDO\s+(?:DO\s+PAGAMENTO|RESIDUAL)[\s:.-]*R?\$?\s*0,00", full_text, flags=re.IGNORECASE):
+        return True
+
     return False
 
 
 def _normalize_pdf_text(value: str) -> str:
-    normalized_lines = [" ".join(line.upper().split()) for line in value.splitlines()]
+    folded = unicodedata.normalize("NFKD", value)
+    ascii_text = "".join(char for char in folded if not unicodedata.combining(char))
+    normalized_lines = [" ".join(line.upper().split()) for line in ascii_text.splitlines()]
     return "\n".join(line for line in normalized_lines if line)
 
 
