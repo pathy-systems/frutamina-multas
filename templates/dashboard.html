@@ -60,6 +60,9 @@
         <button id="syncButton" class="button button-primary" type="button">
           {% if sync_mode == "agent" %}Solicitar leitura agora{% else %}Ler multas agora{% endif %}
         </button>
+        <button id="cancelSyncButton" class="button button-danger button-hidden" type="button">
+          Cancelar leitura
+        </button>
         <a class="button button-secondary" href="/export/csv">Exportar CSV</a>
       </div>
       <div class="sync-status" id="syncStatusCard">

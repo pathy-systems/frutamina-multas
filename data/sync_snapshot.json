@@ -1,8 +1,8 @@
 {
-  "status": "idle",
-  "message": "Pronto para sincronizar.",
+  "status": "canceled",
+  "message": "Sincronizacao cancelada por admin.",
   "started_at": "",
-  "finished_at": "",
+  "finished_at": "26/03/2026 09:42:42",
   "last_success_at": "",
   "total_fines": 0,
   "error": ""

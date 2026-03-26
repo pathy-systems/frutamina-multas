@@ -565,6 +565,25 @@ class FineStore:
             raise RuntimeError("Nao use _save_jobs diretamente com PostgreSQL.")
         JOBS_PATH.write_text(json.dumps(jobs, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def get_job(self, job_id: str) -> dict[str, object] | None:
+        if self.uses_database:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, status, requested_at, started_at, finished_at, requested_by, runner_name, message, error
+                        FROM sync_jobs
+                        WHERE id = %s
+                        """,
+                        (job_id,),
+                    )
+                    return cur.fetchone()
+
+        for job in self._load_jobs():
+            if job["id"] == job_id:
+                return job
+        return None
+
     def has_pending_job(self) -> bool:
         jobs = self._load_jobs()
         return any(job["status"] in {"pending", "running"} for job in jobs)
@@ -624,6 +643,58 @@ class FineStore:
         )
         self._save_sync_snapshot(snapshot)
         return True, job_id
+
+    def cancel_active_job(self, requested_by: str) -> tuple[bool, str]:
+        finished_at = _now_label()
+        message = f"Sincronizacao cancelada por {requested_by}."
+
+        if self.uses_database:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id
+                        FROM sync_jobs
+                        WHERE status IN ('pending', 'running')
+                        ORDER BY requested_at DESC
+                        LIMIT 1
+                        """
+                    )
+                    job = cur.fetchone()
+                    if not job:
+                        return False, "Nao existe sincronizacao pendente ou em andamento."
+
+                    cur.execute(
+                        """
+                        UPDATE sync_jobs
+                        SET status = %s, finished_at = %s, message = %s, error = ''
+                        WHERE id = %s
+                        """,
+                        ("canceled", finished_at, message, job["id"]),
+                    )
+                conn.commit()
+        else:
+            jobs = self._load_jobs()
+            job = next((item for item in jobs if item["status"] in {"pending", "running"}), None)
+            if not job:
+                return False, "Nao existe sincronizacao pendente ou em andamento."
+            job["status"] = "canceled"
+            job["finished_at"] = finished_at
+            job["message"] = message
+            job["error"] = ""
+            self._save_jobs(jobs)
+
+        snapshot = self.get_sync_snapshot()
+        snapshot.update(
+            {
+                "status": "canceled",
+                "message": message,
+                "finished_at": finished_at,
+                "error": "",
+            }
+        )
+        self._save_sync_snapshot(snapshot)
+        return True, message
 
     def claim_next_job(self, agent_name: str) -> dict[str, object] | None:
         if self.uses_database:
@@ -686,6 +757,10 @@ class FineStore:
         return None
 
     def update_job_progress(self, job_id: str, message: str) -> None:
+        current_job = self.get_job(job_id)
+        if not current_job or current_job["status"] == "canceled":
+            return
+
         if self.uses_database:
             with self._connect() as conn:
                 with conn.cursor() as cur:
@@ -712,6 +787,10 @@ class FineStore:
         message: str = "",
         pdf_documents: list[dict[str, object]] | None = None,
     ) -> None:
+        current_job = self.get_job(job_id)
+        if not current_job or current_job["status"] == "canceled":
+            return
+
         self.save(fines, pdf_documents=pdf_documents)
         finished_at = _now_label()
         final_message = message or f"Leitura concluida pelo agente {agent_name}."
@@ -754,6 +833,10 @@ class FineStore:
         self._save_sync_snapshot(snapshot)
 
     def fail_job(self, job_id: str, error_message: str, agent_name: str) -> None:
+        current_job = self.get_job(job_id)
+        if not current_job or current_job["status"] == "canceled":
+            return
+
         finished_at = _now_label()
         if self.uses_database:
             with self._connect() as conn:

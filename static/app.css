@@ -210,11 +210,22 @@ select:focus {
   box-shadow: 0 12px 28px rgba(47, 103, 246, 0.28);
 }
 
+.button-danger {
+  border: 0;
+  color: #fff;
+  background: linear-gradient(135deg, #d44b5a, #eb6c5c);
+  box-shadow: 0 12px 28px rgba(193, 60, 75, 0.24);
+}
+
 .button-secondary,
 .pill {
   border: 1px solid var(--line);
   color: var(--text);
   background: rgba(223, 231, 244, 0.9);
+}
+
+.button-hidden {
+  display: none;
 }
 
 .top-nav {
@@ -281,6 +292,7 @@ select:focus {
 
 .status-idle { background: #9aa9c0; }
 .status-running { background: var(--warning); box-shadow: 0 0 0 10px rgba(255, 182, 72, 0.15); }
+.status-canceled { background: #7e8aa1; box-shadow: 0 0 0 10px rgba(95, 110, 134, 0.12); }
 .status-success { background: var(--green); box-shadow: 0 0 0 10px rgba(39, 178, 106, 0.14); }
 .status-error { background: var(--danger); box-shadow: 0 0 0 10px rgba(193, 60, 75, 0.14); }
 

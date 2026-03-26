@@ -60,6 +60,7 @@
   const searchInput = byId("searchInput");
   const typeFilter = byId("typeFilter");
   const syncButton = byId("syncButton");
+  const cancelSyncButton = byId("cancelSyncButton");
   const statusDot = byId("syncStatusDot");
   const statusTitle = byId("syncStatusTitle");
   const statusMessage = byId("syncStatusMessage");
@@ -198,6 +199,7 @@
       idle: "Pronto",
       queued: "Na fila",
       running: "Sincronizando",
+      canceled: "Cancelado",
       success: "Concluido",
       error: "Falha"
     })[status] || "Pronto";
@@ -208,6 +210,8 @@
     }
     statusMessage.textContent = detail;
     syncButton.disabled = status === "running" || status === "queued";
+    cancelSyncButton.classList.toggle("button-hidden", !(status === "running" || status === "queued"));
+    cancelSyncButton.disabled = !(status === "running" || status === "queued");
     if (status === "running") {
       syncButton.textContent = syncMode === "agent" ? "Agente sincronizando..." : "Sincronizando...";
     } else if (status === "queued") {
@@ -227,7 +231,7 @@
       return;
     }
 
-    jobsList.innerHTML = recentJobs.map((job) => `
+      jobsList.innerHTML = recentJobs.map((job) => `
       <article class="job-card">
         <div class="job-header">
           <strong>${escapeHtml(job.status || "pending")}</strong>
@@ -285,9 +289,25 @@
     alert(payload.message || payload.error || "Falha ao iniciar sincronizacao.");
   }
 
+  async function cancelSync() {
+    const response = await fetch("/api/sync-cancel", {
+      method: "POST",
+      credentials: "same-origin"
+    });
+
+    if (response.ok) {
+      await refreshSyncStatus();
+      return;
+    }
+
+    const payload = await response.json().catch(() => ({ message: "Falha ao cancelar sincronizacao." }));
+    alert(payload.message || payload.error || "Falha ao cancelar sincronizacao.");
+  }
+
   searchInput.addEventListener("input", renderTable);
   typeFilter.addEventListener("change", renderTable);
   syncButton.addEventListener("click", startSync);
+  cancelSyncButton.addEventListener("click", cancelSync);
 
   updateSummary();
   updateTypeFilter();

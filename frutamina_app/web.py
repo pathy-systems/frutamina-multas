@@ -302,6 +302,28 @@ class AppHandler(SimpleHTTPRequestHandler):
             _send_json(self, {"ok": True, "message": "Sincronizacao iniciada."}, HTTPStatus.ACCEPTED)
             return
 
+        if route == "/api/sync-cancel":
+            username = _current_user(self)
+            if not username:
+                _send_json(self, {"error": "Nao autenticado."}, HTTPStatus.UNAUTHORIZED)
+                return
+
+            if CONFIG.sync_mode != "agent":
+                _send_json(
+                    self,
+                    {"ok": False, "message": "O cancelamento pelo dashboard esta disponivel apenas no modo com agente."},
+                    HTTPStatus.BAD_REQUEST,
+                )
+                return
+
+            canceled, message = _store.cancel_active_job(username)
+            if not canceled:
+                _send_json(self, {"ok": False, "message": message}, HTTPStatus.CONFLICT)
+                return
+
+            _send_json(self, {"ok": True, "message": message}, HTTPStatus.OK)
+            return
+
         if route == "/api/agent/jobs/next":
             if not _agent_request_authorized(self):
                 _send_json(self, {"error": "Agente nao autorizado."}, HTTPStatus.UNAUTHORIZED)

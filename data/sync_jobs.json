@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "id": "d7860f57-c169-47b8-b5b0-8cfa30a9fb42",
+    "status": "canceled",
+    "requested_at": "26/03/2026 09:42:42",
+    "started_at": "",
+    "finished_at": "26/03/2026 09:42:42",
+    "requested_by": "admin",
+    "runner_name": "",
+    "message": "Sincronizacao cancelada por admin.",
+    "error": ""
+  }
+]
