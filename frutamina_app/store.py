@@ -406,13 +406,11 @@ class FineStore:
                 fine.status_carteira = "ativa_com_boleto"
                 if not fine.mensagem_valor or "ainda nao" in fine.mensagem_valor.lower():
                     fine.mensagem_valor = "Boleto localizado na ANTT"
-            elif previous_had_boleto:
-                fine.status_carteira = "revisar"
-                if not fine.mensagem_valor or "ainda nao" in fine.mensagem_valor.lower():
-                    fine.mensagem_valor = "Nao localizada em Boleto/Listar.aspx nesta leitura; revisar manualmente"
             else:
                 fine.status_carteira = "ativa_sem_boleto"
-                if not fine.mensagem_valor or "ainda nao" in fine.mensagem_valor.lower():
+                if previous_had_boleto:
+                    fine.mensagem_valor = "Multa ativa sem boleto localizado nesta leitura"
+                elif not fine.mensagem_valor or "ainda nao" in fine.mensagem_valor.lower():
                     fine.mensagem_valor = "Multa ativa sem boleto localizado na ANTT"
 
         return fines
