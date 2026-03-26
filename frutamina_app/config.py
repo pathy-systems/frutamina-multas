@@ -35,10 +35,16 @@ class AppConfig:
     app_port: int = int(os.getenv("PORT", os.getenv("APP_PORT", "8080")))
     dashboard_user: str = os.getenv("DASHBOARD_USER", "admin")
     dashboard_password: str = os.getenv("DASHBOARD_PASSWORD", "admin123")
+    database_url: str = os.getenv("DATABASE_URL", "")
     antt_user: str = os.getenv("ANTT_CPF_CNPJ", "")
     antt_password: str = os.getenv("ANTT_SENHA", "")
     mock_sync: bool = os.getenv("MOCK_SYNC", "0") == "1"
     playwright_headless: bool = os.getenv("PLAYWRIGHT_HEADLESS", "1") == "1"
+    sync_mode: str = os.getenv("SYNC_MODE", "agent" if os.getenv("DATABASE_URL") else "embedded")
+    sync_agent_token: str = os.getenv("SYNC_AGENT_TOKEN", "")
+    sync_agent_name: str = os.getenv("SYNC_AGENT_NAME", "frutamina-agent")
+    agent_server_url: str = os.getenv("AGENT_SERVER_URL", "").rstrip("/")
+    agent_poll_interval: int = int(os.getenv("AGENT_POLL_INTERVAL", "15"))
 
 
 CONFIG = AppConfig()

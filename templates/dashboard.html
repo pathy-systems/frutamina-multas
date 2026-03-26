@@ -38,14 +38,28 @@
     </section>
     {% endif %}
 
+    {% if sync_mode == "agent" %}
+    <section class="alert alert-info">
+      O dashboard cria a solicitacao de leitura e um agente local autorizado executa a leitura real da ANTT fora do Railway.
+    </section>
+    {% endif %}
+
     <section class="sync-banner card" id="dashboard">
       <div>
         <p class="eyebrow">Sincronizacao</p>
-        <h2>Atualizar multas pelo portal</h2>
-        <p class="helper-text">Ao iniciar a sincronizacao, a automacao abre o portal ANTT e atualiza os dados do dashboard.</p>
+        <h2>{% if sync_mode == "agent" %}Solicitar leitura da ANTT{% else %}Atualizar multas pelo portal{% endif %}</h2>
+        <p class="helper-text">
+          {% if sync_mode == "agent" %}
+          O site registra o pedido e o agente local processa a leitura com Playwright.
+          {% else %}
+          Ao iniciar a sincronizacao, a automacao abre o portal ANTT e atualiza os dados do dashboard.
+          {% endif %}
+        </p>
       </div>
       <div class="sync-actions">
-        <button id="syncButton" class="button button-primary" type="button">Ler multas agora</button>
+        <button id="syncButton" class="button button-primary" type="button">
+          {% if sync_mode == "agent" %}Solicitar leitura agora{% else %}Ler multas agora{% endif %}
+        </button>
         <a class="button button-secondary" href="/export/csv">Exportar CSV</a>
       </div>
       <div class="sync-status" id="syncStatusCard">
@@ -55,6 +69,16 @@
           <p id="syncStatusMessage">Aguardando uma nova sincronizacao.</p>
         </div>
       </div>
+    </section>
+
+    <section class="card jobs-card">
+      <div class="section-header">
+        <div>
+          <h2>Fila de sincronizacao</h2>
+          <p class="helper-text">Ultimas solicitacoes feitas pelo dashboard e processadas pelo agente.</p>
+        </div>
+      </div>
+      <div id="jobsList" class="stack-list"></div>
     </section>
 
     <section class="stats-grid">
@@ -144,6 +168,7 @@
 
   <script id="initialDashboardPayload" type="application/json">{{ initial_payload_json | safe }}</script>
   <script id="initialSyncSnapshot" type="application/json">{{ sync_snapshot_json | safe }}</script>
+  <script id="appMeta" type="application/json">{{ {"syncMode": sync_mode, "databaseEnabled": database_enabled, "recentJobs": recent_jobs} | tojson | safe }}</script>
   <script src="/static/app.js" defer></script>
 </body>
 </html>

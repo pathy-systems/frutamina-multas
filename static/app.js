@@ -41,6 +41,13 @@
     status: "idle",
     message: "Pronto para sincronizar."
   });
+  const appMeta = parseJsonScript("appMeta", {
+    syncMode: "embedded",
+    databaseEnabled: false,
+    recentJobs: []
+  });
+  const syncMode = appMeta.syncMode || "embedded";
+  let recentJobs = appMeta.recentJobs || [];
   let lastSuccessKey = syncSnapshot.last_success_at || "";
 
   const searchInput = byId("searchInput");
@@ -49,6 +56,7 @@
   const statusDot = byId("syncStatusDot");
   const statusTitle = byId("syncStatusTitle");
   const statusMessage = byId("syncStatusMessage");
+  const jobsList = byId("jobsList");
 
   function updateSummary() {
     byId("totalFinesValue").textContent = payload.summary.total_fines;
@@ -166,6 +174,7 @@
     statusDot.className = `status-dot status-${status}`;
     statusTitle.textContent = ({
       idle: "Pronto",
+      queued: "Na fila",
       running: "Sincronizando",
       success: "Concluido",
       error: "Falha"
@@ -176,8 +185,39 @@
       detail += ` Ultimo sucesso: ${syncSnapshot.last_success_at}.`;
     }
     statusMessage.textContent = detail;
-    syncButton.disabled = status === "running";
-    syncButton.textContent = status === "running" ? "Sincronizando..." : "Ler multas agora";
+    syncButton.disabled = status === "running" || status === "queued";
+    if (status === "running") {
+      syncButton.textContent = syncMode === "agent" ? "Agente sincronizando..." : "Sincronizando...";
+    } else if (status === "queued") {
+      syncButton.textContent = "Solicitacao na fila";
+    } else {
+      syncButton.textContent = syncMode === "agent" ? "Solicitar leitura agora" : "Ler multas agora";
+    }
+  }
+
+  function renderJobs() {
+    if (!jobsList) {
+      return;
+    }
+
+    if (!recentJobs.length) {
+      jobsList.innerHTML = '<div class="empty-state">Nenhuma solicitacao registrada ainda.</div>';
+      return;
+    }
+
+    jobsList.innerHTML = recentJobs.map((job) => `
+      <article class="job-card">
+        <div class="job-header">
+          <strong>${escapeHtml(job.status || "pending")}</strong>
+          <span>${escapeHtml(job.requested_at || "")}</span>
+        </div>
+        <p>${escapeHtml(job.message || "")}</p>
+        <div class="job-meta">
+          <span>Solicitado por: ${escapeHtml(job.requested_by || "-")}</span>
+          <span>Agente: ${escapeHtml(job.runner_name || "-")}</span>
+        </div>
+      </article>
+    `).join("");
   }
 
   async function refreshDashboardData() {
@@ -199,7 +239,9 @@
       return;
     }
     syncSnapshot = await response.json();
+    recentJobs = syncSnapshot.jobs || recentJobs;
     renderSyncStatus();
+    renderJobs();
     if (syncSnapshot.status === "success" && syncSnapshot.last_success_at !== lastSuccessKey) {
       lastSuccessKey = syncSnapshot.last_success_at || "";
       await refreshDashboardData();
@@ -231,5 +273,6 @@
   renderTypeCards();
   renderTopFines();
   renderSyncStatus();
+  renderJobs();
   window.setInterval(refreshSyncStatus, 4000);
 })();

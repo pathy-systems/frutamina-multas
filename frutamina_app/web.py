@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .config import CONFIG, STATIC_DIR, TEMPLATE_DIR, ensure_directories
+from .models import FineRecord
 from .store import FineStore
 from .sync_manager import SyncManager
 
@@ -76,6 +77,14 @@ def _read_form(handler: SimpleHTTPRequestHandler) -> dict[str, str]:
     return {key: values[0] for key, values in parsed.items()}
 
 
+def _read_json(handler: SimpleHTTPRequestHandler) -> dict[str, object]:
+    length = int(handler.headers.get("Content-Length", "0"))
+    raw_body = handler.rfile.read(length) if length > 0 else b"{}"
+    if not raw_body:
+        return {}
+    return json.loads(raw_body.decode("utf-8"))
+
+
 def _send_html(handler: SimpleHTTPRequestHandler, html: str, status: HTTPStatus = HTTPStatus.OK) -> None:
     payload = html.encode("utf-8")
     handler.send_response(status)
@@ -101,6 +110,21 @@ def _redirect(handler: SimpleHTTPRequestHandler, location: str, cookie_header: s
     if cookie_header:
         handler.send_header("Set-Cookie", cookie_header)
     handler.end_headers()
+
+
+def _agent_request_authorized(handler: SimpleHTTPRequestHandler) -> bool:
+    if not CONFIG.sync_agent_token:
+        return False
+
+    auth_header = handler.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.removeprefix("Bearer ").strip()
+        return secrets.compare_digest(token, CONFIG.sync_agent_token)
+
+    header_token = handler.headers.get("X-Agent-Token", "")
+    if header_token:
+        return secrets.compare_digest(header_token, CONFIG.sync_agent_token)
+    return False
 
 
 class AppHandler(SimpleHTTPRequestHandler):
@@ -145,8 +169,11 @@ class AppHandler(SimpleHTTPRequestHandler):
                     page_title="Dashboard | Frutamina Multas",
                     username=username,
                     initial_payload_json=json.dumps(payload, ensure_ascii=False),
-                    sync_snapshot_json=json.dumps(_sync_manager.snapshot(), ensure_ascii=False),
+                    sync_snapshot_json=json.dumps(_store.get_sync_snapshot(), ensure_ascii=False),
                     mock_mode=CONFIG.mock_sync,
+                    sync_mode=CONFIG.sync_mode,
+                    database_enabled=_store.uses_database,
+                    recent_jobs=_store.list_recent_jobs(),
                 ),
             )
             return
@@ -162,7 +189,21 @@ class AppHandler(SimpleHTTPRequestHandler):
             if not _current_user(self):
                 _send_json(self, {"error": "Nao autenticado."}, HTTPStatus.UNAUTHORIZED)
                 return
-            _send_json(self, _sync_manager.snapshot())
+            snapshot = _store.get_sync_snapshot()
+            snapshot["mode"] = CONFIG.sync_mode
+            snapshot["jobs"] = _store.list_recent_jobs(5)
+            _send_json(self, snapshot)
+            return
+
+        if route == "/api/agent/jobs/next":
+            if not _agent_request_authorized(self):
+                _send_json(self, {"error": "Agente nao autorizado."}, HTTPStatus.UNAUTHORIZED)
+                return
+
+            payload = _read_json(self) if self.command == "POST" else {}
+            agent_name = str(payload.get("agent_name") or CONFIG.sync_agent_name)
+            job = _store.claim_next_job(agent_name)
+            _send_json(self, {"job": job})
             return
 
         if route == "/export/csv":
@@ -170,12 +211,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 _redirect(self, "/login")
                 return
 
-            csv_path = _store.csv_path()
-            if not csv_path.exists():
-                self.send_error(HTTPStatus.NOT_FOUND, "Nenhum CSV gerado ainda.")
-                return
-
-            payload = csv_path.read_bytes()
+            payload = _store.build_csv_bytes()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header("Content-Disposition", 'attachment; filename="multas_ativas.csv"')
@@ -237,8 +273,25 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         if route == "/api/sync-start":
-            if not _current_user(self):
+            username = _current_user(self)
+            if not username:
                 _send_json(self, {"error": "Nao autenticado."}, HTTPStatus.UNAUTHORIZED)
+                return
+
+            if CONFIG.sync_mode == "agent":
+                created, payload = _store.request_sync(username)
+                if not created:
+                    _send_json(self, {"ok": False, "message": payload}, HTTPStatus.CONFLICT)
+                    return
+                _send_json(
+                    self,
+                    {
+                        "ok": True,
+                        "message": "Solicitacao criada. O agente local vai processar a leitura.",
+                        "job_id": payload,
+                    },
+                    HTTPStatus.ACCEPTED,
+                )
                 return
 
             started = _sync_manager.start()
@@ -247,6 +300,52 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
 
             _send_json(self, {"ok": True, "message": "Sincronizacao iniciada."}, HTTPStatus.ACCEPTED)
+            return
+
+        if route == "/api/agent/jobs/next":
+            if not _agent_request_authorized(self):
+                _send_json(self, {"error": "Agente nao autorizado."}, HTTPStatus.UNAUTHORIZED)
+                return
+            payload = _read_json(self)
+            agent_name = str(payload.get("agent_name") or CONFIG.sync_agent_name)
+            job = _store.claim_next_job(agent_name)
+            _send_json(self, {"job": job})
+            return
+
+        if route.endswith("/progress") and route.startswith("/api/agent/jobs/"):
+            if not _agent_request_authorized(self):
+                _send_json(self, {"error": "Agente nao autorizado."}, HTTPStatus.UNAUTHORIZED)
+                return
+            job_id = route.removeprefix("/api/agent/jobs/").removesuffix("/progress")
+            payload = _read_json(self)
+            message = str(payload.get("message") or "Agente atualizou o progresso.")
+            _store.update_job_progress(job_id, message)
+            _send_json(self, {"ok": True})
+            return
+
+        if route.endswith("/complete") and route.startswith("/api/agent/jobs/"):
+            if not _agent_request_authorized(self):
+                _send_json(self, {"error": "Agente nao autorizado."}, HTTPStatus.UNAUTHORIZED)
+                return
+            job_id = route.removeprefix("/api/agent/jobs/").removesuffix("/complete")
+            payload = _read_json(self)
+            agent_name = str(payload.get("agent_name") or CONFIG.sync_agent_name)
+            fines = [FineRecord.from_dict(item) for item in payload.get("fines", [])]
+            message = str(payload.get("message") or f"Leitura concluida pelo agente {agent_name}.")
+            _store.complete_job(job_id, fines, agent_name, message)
+            _send_json(self, {"ok": True, "total_fines": len(fines)})
+            return
+
+        if route.endswith("/fail") and route.startswith("/api/agent/jobs/"):
+            if not _agent_request_authorized(self):
+                _send_json(self, {"error": "Agente nao autorizado."}, HTTPStatus.UNAUTHORIZED)
+                return
+            job_id = route.removeprefix("/api/agent/jobs/").removesuffix("/fail")
+            payload = _read_json(self)
+            agent_name = str(payload.get("agent_name") or CONFIG.sync_agent_name)
+            message = str(payload.get("message") or "Sincronizacao falhou.")
+            _store.fail_job(job_id, message, agent_name)
+            _send_json(self, {"ok": True})
             return
 
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -264,6 +363,7 @@ def run() -> None:
     server = create_server()
     print(f"Aplicacao disponivel em http://{CONFIG.app_host}:{server.server_port}/login")
     print(f"Usuario do dashboard: {CONFIG.dashboard_user}")
+    print(f"Modo de sincronizacao: {CONFIG.sync_mode}")
     print("Use Ctrl+C para encerrar.")
     try:
         server.serve_forever()
