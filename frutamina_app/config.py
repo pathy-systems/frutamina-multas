@@ -45,6 +45,7 @@ class AppConfig:
     sync_agent_name: str = os.getenv("SYNC_AGENT_NAME", "frutamina-agent")
     agent_server_url: str = os.getenv("AGENT_SERVER_URL", "").rstrip("/")
     agent_poll_interval: int = int(os.getenv("AGENT_POLL_INTERVAL", "15"))
+    antt_representado_match: str = os.getenv("ANTT_REPRESENTADO_MATCH", "FRUTAMINA - COMERCIAL AGRICOLA LTDA.")
 
 
 CONFIG = AppConfig()

@@ -30,6 +30,7 @@ class BoletoExtractionResult:
 URL_LOGIN = "https://appweb1.antt.gov.br/spmi/Site/Login.aspx?ReturnUrl=%2fspmi%2fSite%2fBoleto%2fListar.aspx"
 URL_DESTINO_LOGIN = "**/*Default.aspx"
 URL_VISTAS_PROCESSO = "https://appweb1.antt.gov.br/spmi/Site/Acessos/VistasAoProcesso.aspx"
+URL_BOLETO_LISTAR = "https://appweb1.antt.gov.br/spmi/Site/Boleto/Listar.aspx"
 
 ID_LOGIN = "#ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_txtLoginCpjCnpj"
 ID_SENHA = "#ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_txtLoginSenha"
@@ -43,6 +44,9 @@ SELECTOR_TABELA_RESULTADO = "#Corpo_gdvResultado"
 SELECTOR_NENHUM_REGISTRO = f"{SELECTOR_TABELA_RESULTADO} td[colspan='6']"
 SELECTOR_RADIO_NAO = "#MessageBoxPesquisa_rdbNao"
 SELECTOR_BOTAO_OK_PESQUISA = "#MessageBoxPesquisa_ButtonOkPesquisa"
+SELECTOR_REPRESENTADO_BOLETO = "#ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ddlRepresentado"
+SELECTOR_TIPO_MULTA_BOLETO = "#ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ddlTipoMulta"
+SELECTOR_BOTAO_PESQUISAR_BOLETO = "#ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_btnPesquisar"
 
 OPCOES_FISCALIZACAO = {
     "Excesso de Peso": "2",
@@ -116,6 +120,9 @@ async def _run_sync(callback: StatusCallback | None = None) -> list[FineRecord]:
                 await _wait_modal_cycle(page)
                 fines.extend(await _extract_table_data(page, nome, callback))
 
+            if fines:
+                await _crosscheck_with_boleto_list(page, fines, callback)
+
         finally:
             await browser.close()
 
@@ -127,6 +134,120 @@ async def _wait_modal_cycle(page: "Page") -> None:
         await page.wait_for_selector(SELECTOR_MODAL_PROCESSANDO, state="visible", timeout=10000)
     except Exception:
         pass
+
+
+async def _crosscheck_with_boleto_list(
+    page: "Page",
+    fines: list[FineRecord],
+    callback: StatusCallback | None,
+) -> None:
+    try:
+        if callback:
+            callback("Validando multas na pagina de boletos.")
+        await page.goto(URL_BOLETO_LISTAR, wait_until="networkidle")
+        await _wait_modal_cycle(page)
+
+        representado = await _select_option_containing_text(
+            page,
+            SELECTOR_REPRESENTADO_BOLETO,
+            CONFIG.antt_representado_match,
+        )
+        if not representado:
+            if callback:
+                callback("Nao foi possivel selecionar o representado na pagina de boletos.")
+            return
+        await _wait_modal_cycle(page)
+
+        tipo_options = await _get_select_options(page, SELECTOR_TIPO_MULTA_BOLETO)
+        if not tipo_options:
+            if callback:
+                callback("Nao foi possivel carregar os tipos de multa em Boleto/Listar.aspx.")
+            return
+
+        matched_indexes: set[int] = set()
+        for option in tipo_options:
+            if callback:
+                callback(f"Cruzando boletos: {option['label']}.")
+            await page.select_option(SELECTOR_TIPO_MULTA_BOLETO, value=option["value"])
+            await _wait_modal_cycle(page)
+            await page.click(SELECTOR_BOTAO_PESQUISAR_BOLETO, timeout=10000)
+            await _wait_modal_cycle(page)
+            matched_indexes.update(await _extract_boleto_matches_from_page(page, fines))
+
+        for index, fine in enumerate(fines):
+            if index not in matched_indexes:
+                continue
+            fine.boleto_disponivel = True
+            if not fine.fonte_valor:
+                fine.fonte_valor = "lista_boletos"
+            if not fine.valor_disponivel:
+                fine.mensagem_valor = "Boleto localizado em Boleto/Listar.aspx"
+    except Exception as exc:
+        if callback:
+            callback(f"Falha ao cruzar a pagina de boletos: {exc}")
+
+
+async def _select_option_containing_text(page: "Page", selector: str, text: str) -> str:
+    wanted = (text or "").strip()
+    if not wanted:
+        return ""
+
+    return await page.eval_on_selector(
+        selector,
+        """
+        (element, wantedText) => {
+          const wanted = (wantedText || '').toUpperCase();
+          const options = Array.from(element.options || []);
+          const option = options.find((item) => (item.textContent || '').toUpperCase().includes(wanted));
+          if (!option) {
+            return '';
+          }
+          element.value = option.value;
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+          return option.textContent || '';
+        }
+        """,
+        wanted,
+    )
+
+
+async def _get_select_options(page: "Page", selector: str) -> list[dict[str, str]]:
+    return await page.eval_on_selector(
+        selector,
+        """
+        (element) => Array.from(element.options || [])
+          .filter((option) => option.value)
+          .map((option) => ({
+            value: option.value,
+            label: (option.textContent || '').trim()
+          }))
+        """,
+    )
+
+
+async def _extract_boleto_matches_from_page(page: "Page", fines: list[FineRecord]) -> set[int]:
+    rows = await page.locator("table tr").all()
+    matched_indexes: set[int] = set()
+
+    for row in rows:
+        row_text = " ".join((((await row.text_content()) or "").split()))
+        row_lookup = _normalize_lookup_text(row_text)
+        if not row_lookup or "NENHUMREGISTRO" in row_lookup:
+            continue
+
+        for index, fine in enumerate(fines):
+            if index in matched_indexes:
+                continue
+
+            process_lookup = _normalize_lookup_text(fine.numero_processo)
+            auto_lookup = _normalize_lookup_text(fine.auto_infracao)
+            process_match = bool(process_lookup and process_lookup in row_lookup)
+            auto_match = bool(auto_lookup and auto_lookup in row_lookup)
+            if process_match or auto_match:
+                matched_indexes.add(index)
+
+    return matched_indexes
     try:
         await page.wait_for_selector(SELECTOR_MODAL_PROCESSANDO, state="hidden", timeout=120000)
     except Exception:
@@ -423,6 +544,10 @@ def _normalize_pdf_text(value: str) -> str:
     return "\n".join(line for line in normalized_lines if line)
 
 
+def _normalize_lookup_text(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", _normalize_pdf_text(value))
+
+
 def _parse_boleto_amount(value: str) -> Decimal | None:
     normalized = (value or "").replace(".", "").replace(",", ".").strip()
     try:
@@ -446,6 +571,8 @@ def _mock_fines() -> list[FineRecord]:
             valor_disponivel=True,
             mensagem_valor="Valor do documento do boleto encontrado",
             fonte_valor="valor_do_documento",
+            status_carteira="ativa_com_boleto",
+            ja_teve_boleto=True,
         ),
         FineRecord(
             tipo_fiscalizacao="Infraestrutura Rodoviaria",
@@ -458,5 +585,7 @@ def _mock_fines() -> list[FineRecord]:
             boleto_disponivel=False,
             valor_disponivel=False,
             mensagem_valor="Boleto e valor ainda nao estao disponiveis",
+            status_carteira="ativa_sem_boleto",
+            ja_teve_boleto=False,
         ),
     ]

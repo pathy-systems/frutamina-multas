@@ -5,6 +5,8 @@ import binascii
 import csv
 import io
 import json
+import re
+import unicodedata
 import uuid
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -47,6 +49,29 @@ def _default_snapshot() -> dict[str, object]:
 
 def _normalize_pdf_name(value: str) -> str:
     return Path(value or "").name
+
+
+def _normalize_lookup_text(value: str) -> str:
+    folded = unicodedata.normalize("NFKD", value or "")
+    ascii_text = "".join(char for char in folded if not unicodedata.combining(char))
+    return re.sub(r"[^A-Z0-9]", "", ascii_text.upper())
+
+
+def _record_lookup_keys(fine: FineRecord) -> list[str]:
+    keys: list[str] = []
+    if fine.numero_processo:
+        keys.append(_normalize_lookup_text(fine.numero_processo))
+    if fine.auto_infracao:
+        keys.append(_normalize_lookup_text(fine.auto_infracao))
+    return [key for key in keys if key]
+
+
+def _label_status_carteira(status: str) -> str:
+    return {
+        "ativa_com_boleto": "Ativa com boleto",
+        "ativa_sem_boleto": "Aguardando boleto",
+        "revisar": "Revisar",
+    }.get(status, "Em acompanhamento")
 
 
 class FineStore:
@@ -94,6 +119,8 @@ class FineStore:
                         valor_disponivel BOOLEAN NOT NULL DEFAULT FALSE,
                         mensagem_valor TEXT NOT NULL DEFAULT 'Boleto e valor ainda nao estao disponiveis',
                         fonte_valor TEXT NOT NULL DEFAULT '',
+                        status_carteira TEXT NOT NULL DEFAULT 'ativa_sem_boleto',
+                        ja_teve_boleto BOOLEAN NOT NULL DEFAULT FALSE,
                         fonte TEXT NOT NULL DEFAULT 'ANTT',
                         updated_at TEXT NOT NULL DEFAULT ''
                     )
@@ -108,6 +135,8 @@ class FineStore:
                     """
                 )
                 cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS fonte_valor TEXT NOT NULL DEFAULT ''")
+                cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS status_carteira TEXT NOT NULL DEFAULT 'ativa_sem_boleto'")
+                cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS ja_teve_boleto BOOLEAN NOT NULL DEFAULT FALSE")
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS pdf_documents (
@@ -164,7 +193,7 @@ class FineStore:
                         """
                         SELECT tipo_fiscalizacao, auto_infracao, numero_processo, autuado, situacao, data_auto,
                                valor_multa, pdf_nome, boleto_disponivel, valor_disponivel, mensagem_valor,
-                               fonte_valor, fonte
+                               fonte_valor, status_carteira, ja_teve_boleto, fonte
                         FROM fines
                         ORDER BY tipo_fiscalizacao, auto_infracao
                         """
@@ -191,6 +220,12 @@ class FineStore:
                         else "Boleto e valor ainda nao estao disponiveis"
                     ),
                     fonte_valor=row.get("fonte_valor", ""),
+                    status_carteira=str(row.get("status_carteira") or "ativa_sem_boleto"),
+                    ja_teve_boleto=bool(
+                        row.get("ja_teve_boleto", False)
+                        or row.get("boleto_disponivel", False)
+                        or Decimal(str(row["valor_multa"])) > Decimal("0")
+                    ),
                     fonte=row["fonte"],
                 )
                 for row in rows
@@ -226,6 +261,14 @@ class FineStore:
                             else "Boleto e valor ainda nao estao disponiveis"
                         ),
                         fonte_valor=row.get("Fonte do Valor", ""),
+                        status_carteira=row.get("Status da Carteira", "ativa_sem_boleto"),
+                        ja_teve_boleto=(row.get("Ja Teve Boleto", "").strip().lower() == "sim")
+                        if row.get("Ja Teve Boleto") is not None
+                        else (
+                            (row.get("Boleto Disponivel", "").strip().lower() == "sim")
+                            if row.get("Boleto Disponivel") is not None
+                            else bool(row.get("PDF", ""))
+                        ),
                     )
                     for row in reader
                 ]
@@ -343,7 +386,39 @@ class FineStore:
             return None
         return bytes(row["content"]), str(row.get("content_type") or "application/pdf")
 
+    def _apply_history_rules(self, fines: list[FineRecord]) -> list[FineRecord]:
+        previous_records = self.load()
+        previous_by_key: dict[str, FineRecord] = {}
+        for previous in previous_records:
+            for key in _record_lookup_keys(previous):
+                previous_by_key.setdefault(key, previous)
+
+        for fine in fines:
+            previous = next(
+                (previous_by_key[key] for key in _record_lookup_keys(fine) if key in previous_by_key),
+                None,
+            )
+            current_has_boleto = fine.boleto_disponivel or fine.valor_disponivel
+            previous_had_boleto = previous.ja_teve_boleto if previous else False
+            fine.ja_teve_boleto = current_has_boleto or previous_had_boleto
+
+            if current_has_boleto:
+                fine.status_carteira = "ativa_com_boleto"
+                if not fine.mensagem_valor or "ainda nao" in fine.mensagem_valor.lower():
+                    fine.mensagem_valor = "Boleto localizado na ANTT"
+            elif previous_had_boleto:
+                fine.status_carteira = "revisar"
+                if not fine.mensagem_valor or "ainda nao" in fine.mensagem_valor.lower():
+                    fine.mensagem_valor = "Nao localizada em Boleto/Listar.aspx nesta leitura; revisar manualmente"
+            else:
+                fine.status_carteira = "ativa_sem_boleto"
+                if not fine.mensagem_valor or "ainda nao" in fine.mensagem_valor.lower():
+                    fine.mensagem_valor = "Multa ativa sem boleto localizado na ANTT"
+
+        return fines
+
     def save(self, fines: list[FineRecord], pdf_documents: list[dict[str, object]] | None = None) -> None:
+        fines = self._apply_history_rules(fines)
         valid_pdf_names = {_normalize_pdf_name(fine.pdf_nome) for fine in fines if fine.pdf_nome}
         prepared_pdf_documents = self._prepare_pdf_documents(pdf_documents)
 
@@ -358,9 +433,9 @@ class FineStore:
                             INSERT INTO fines (
                                 auto_infracao, tipo_fiscalizacao, numero_processo, autuado, situacao,
                                 data_auto, valor_multa, pdf_nome, boleto_disponivel, valor_disponivel,
-                                mensagem_valor, fonte_valor, fonte, updated_at
+                                mensagem_valor, fonte_valor, status_carteira, ja_teve_boleto, fonte, updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 fine.auto_infracao,
@@ -375,6 +450,8 @@ class FineStore:
                                 fine.valor_disponivel,
                                 fine.mensagem_valor,
                                 fine.fonte_valor,
+                                fine.status_carteira,
+                                fine.ja_teve_boleto,
                                 fine.fonte,
                                 now,
                             ),
@@ -409,6 +486,8 @@ class FineStore:
                 "Valor Disponivel",
                 "Mensagem do Boleto",
                 "Fonte do Valor",
+                "Status da Carteira",
+                "Ja Teve Boleto",
                 "PDF",
             ],
             delimiter=";",
@@ -428,6 +507,8 @@ class FineStore:
                     "Valor Disponivel": "Sim" if fine.valor_disponivel else "Nao",
                     "Mensagem do Boleto": fine.mensagem_valor,
                     "Fonte do Valor": fine.fonte_valor,
+                    "Status da Carteira": fine.status_carteira,
+                    "Ja Teve Boleto": "Sim" if fine.ja_teve_boleto else "Nao",
                     "PDF": fine.pdf_nome,
                 }
             )
@@ -439,8 +520,10 @@ class FineStore:
         fines_com_valor = [fine for fine in fines if fine.valor_disponivel]
         total_valor = sum((fine.valor_multa for fine in fines_com_valor), Decimal("0"))
         tipos: dict[str, int] = {}
+        portfolio_status: dict[str, int] = {}
         for fine in fines:
             tipos[fine.tipo_fiscalizacao] = tipos.get(fine.tipo_fiscalizacao, 0) + 1
+            portfolio_status[fine.status_carteira] = portfolio_status.get(fine.status_carteira, 0) + 1
 
         top_items = sorted(fines_com_valor, key=lambda item: item.valor_multa, reverse=True)[:5]
         updated_at = self.get_sync_snapshot().get("last_success_at") or self.last_updated_label()
@@ -451,12 +534,17 @@ class FineStore:
                 "total_value": _format_brl(total_valor),
                 "available_boleto_count": len(fines_com_valor),
                 "pending_boleto_count": len(fines) - len(fines_com_valor),
+                "review_count": portfolio_status.get("revisar", 0),
                 "active_types": len(tipos),
                 "updated_at": updated_at or "Sem sincronizacao ainda",
             },
             "type_counts": [
                 {"name": name, "count": count}
                 for name, count in sorted(tipos.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "portfolio_status_counts": [
+                {"status": status, "label": _label_status_carteira(status), "count": count}
+                for status, count in sorted(portfolio_status.items(), key=lambda item: (-item[1], item[0]))
             ],
             "top_fines": [
                 {
@@ -480,6 +568,9 @@ class FineStore:
                     "boletoDisponivel": fine.boleto_disponivel,
                     "mensagemValor": fine.mensagem_valor,
                     "fonteValor": fine.fonte_valor,
+                    "statusCarteira": fine.status_carteira,
+                    "statusCarteiraLabel": _label_status_carteira(fine.status_carteira),
+                    "jaTeveBoleto": fine.ja_teve_boleto,
                     "pdfNome": fine.pdf_nome,
                     "pdfUrl": f"/downloads/{fine.pdf_nome}"
                     if fine.pdf_nome and _normalize_pdf_name(fine.pdf_nome) in pdf_names

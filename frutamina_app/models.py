@@ -20,6 +20,8 @@ class FineRecord:
     valor_disponivel: bool = False
     mensagem_valor: str = "Boleto e valor ainda nao estao disponiveis"
     fonte_valor: str = ""
+    status_carteira: str = "ativa_sem_boleto"
+    ja_teve_boleto: bool = False
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -47,6 +49,14 @@ class FineRecord:
             if valor_disponivel
             else "Boleto e valor ainda nao estao disponiveis"
         )
+        ja_teve_boleto = (
+            bool(payload.get("ja_teve_boleto"))
+            if payload.get("ja_teve_boleto") is not None
+            else boleto_disponivel or valor_disponivel
+        )
+        status_carteira = str(payload.get("status_carteira") or "").strip() or (
+            "ativa_com_boleto" if boleto_disponivel or valor_disponivel else "ativa_sem_boleto"
+        )
         return cls(
             tipo_fiscalizacao=str(payload.get("tipo_fiscalizacao", "")),
             auto_infracao=str(payload.get("auto_infracao", "")),
@@ -61,6 +71,8 @@ class FineRecord:
             valor_disponivel=valor_disponivel,
             mensagem_valor=str(payload.get("mensagem_valor") or mensagem_padrao),
             fonte_valor=str(payload.get("fonte_valor", "")),
+            status_carteira=status_carteira,
+            ja_teve_boleto=ja_teve_boleto,
         )
 
 

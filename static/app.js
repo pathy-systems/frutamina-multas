@@ -37,10 +37,12 @@
       total_value: "R$ 0,00",
       available_boleto_count: 0,
       pending_boleto_count: 0,
+      review_count: 0,
       active_types: 0,
       updated_at: "Sem sincronizacao"
     },
     type_counts: [],
+    portfolio_status_counts: [],
     top_fines: [],
     fines: []
   });
@@ -69,7 +71,7 @@
   function updateSummary() {
     byId("totalFinesValue").textContent = payload.summary.total_fines;
     byId("totalValueValue").textContent = payload.summary.total_value;
-    byId("totalValueHint").textContent = `${payload.summary.available_boleto_count || 0} boleto(s) com valor encontrado`;
+    byId("totalValueHint").textContent = `${payload.summary.available_boleto_count || 0} boleto(s) com valor encontrado | ${payload.summary.review_count || 0} em revisao`;
     byId("activeTypesValue").textContent = payload.summary.active_types;
     byId("updatedAtValue").textContent = payload.summary.updated_at;
   }
@@ -126,7 +128,7 @@
         ? `
           <div class="value-cell">
             <strong>${escapeHtml(item.valor)}</strong>
-            <span class="cell-muted">Valor do documento</span>
+            <span class="cell-muted">${escapeHtml(item.statusCarteiraLabel || "Ativa com boleto")} | Valor do documento</span>
           </div>
         `
         : `
@@ -134,6 +136,7 @@
             <span class="value-pill ${item.boletoDisponivel ? "value-pill-warning" : "value-pill-muted"}">
               ${escapeHtml(item.mensagemValor || "Boleto e valor ainda nao estao disponiveis")}
             </span>
+            <span class="cell-muted">${escapeHtml(item.statusCarteiraLabel || "Aguardando boleto")}</span>
           </div>
         `;
 
@@ -147,7 +150,12 @@
           </td>
           <td>${escapeHtml(item.tipo)}</td>
           <td>${escapeHtml(item.processo)}</td>
-          <td><span class="badge">${escapeHtml(item.situacao)}</span></td>
+          <td>
+            <div class="cell-title">
+              <span class="badge">${escapeHtml(item.situacao)}</span>
+              <span class="cell-muted">${escapeHtml(item.statusCarteiraLabel || "")}</span>
+            </div>
+          </td>
           <td>${escapeHtml(item.dataAuto)}</td>
           <td>${valueCell}</td>
           <td>${pdf}</td>
