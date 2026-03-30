@@ -32,9 +32,6 @@
         {% if error_message %}
         <div class="alert alert-error">{{ error_message }}</div>
         {% endif %}
-        {% if request_message %}
-        <div class="alert {% if request_tone == 'error' %}alert-error{% else %}alert-info{% endif %}">{{ request_message }}</div>
-        {% endif %}
         <form class="login-form" method="post" action="/login">
           <label for="username">Usuario</label>
           <input id="username" name="username" type="text" autocomplete="username" required>
@@ -44,27 +41,77 @@
 
           <button class="button button-primary" type="submit">Entrar no dashboard</button>
         </form>
-
-        <div class="login-divider"></div>
-
-        <div class="request-account-block">
-          <h3>Solicitar nova conta</h3>
-          <p class="helper-text">Seu acesso fica pendente ate um administrador aprovar. Todas as novas contas entram como usuario comum.</p>
-          <form class="login-form" method="post" action="/account-request">
-            <label for="request_display_name">Seu nome</label>
-            <input id="request_display_name" name="display_name" type="text" autocomplete="name" required>
-
-            <label for="request_username">Login desejado</label>
-            <input id="request_username" name="username" type="text" autocomplete="username" required>
-
-            <label for="request_password">Senha desejada</label>
-            <input id="request_password" name="password" type="password" autocomplete="new-password" required>
-
-            <button class="button button-secondary" type="submit">Enviar solicitacao</button>
-          </form>
+        <div class="login-actions">
+          <button class="button button-secondary" id="openRequestModal" type="button">Criar conta</button>
         </div>
       </div>
     </section>
   </main>
+
+  <dialog id="accountRequestModal" class="modal-dialog">
+    <form method="dialog" class="modal-shell">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow modal-eyebrow">Solicitacao de acesso</p>
+          <h3>Criar conta</h3>
+        </div>
+        <button class="modal-close" type="submit" aria-label="Fechar">×</button>
+      </div>
+    </form>
+
+    {% if request_message %}
+    <div class="alert {% if request_tone == 'error' %}alert-error{% else %}alert-info{% endif %}">
+      {{ request_message }}
+    </div>
+    {% endif %}
+
+    <p class="helper-text">Seu pedido fica pendente ate aprovacao. Toda conta nova nasce como usuario comum.</p>
+
+    <form class="login-form" method="post" action="/account-request">
+      <label for="request_display_name">Seu nome</label>
+      <input id="request_display_name" name="display_name" type="text" autocomplete="name" required>
+
+      <label for="request_username">Login desejado</label>
+      <input id="request_username" name="username" type="text" autocomplete="username" required>
+
+      <label for="request_password">Senha desejada</label>
+      <input id="request_password" name="password" type="password" autocomplete="new-password" required>
+
+      <div class="modal-actions">
+        <button class="button button-secondary" id="closeRequestModal" type="button">Cancelar</button>
+        <button class="button button-primary" type="submit">Enviar solicitacao</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    (() => {
+      const modal = document.getElementById("accountRequestModal");
+      const openButton = document.getElementById("openRequestModal");
+      const closeButton = document.getElementById("closeRequestModal");
+      if (!modal || !openButton || typeof modal.showModal !== "function") {
+        return;
+      }
+
+      openButton.addEventListener("click", () => modal.showModal());
+      closeButton?.addEventListener("click", () => modal.close());
+      modal.addEventListener("click", (event) => {
+        const rect = modal.getBoundingClientRect();
+        const inside =
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom;
+        if (!inside) {
+          modal.close();
+        }
+      });
+
+      const shouldOpen = {{ 'true' if request_message else 'false' }};
+      if (shouldOpen) {
+        modal.showModal();
+      }
+    })();
+  </script>
 </body>
 </html>

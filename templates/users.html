@@ -94,38 +94,7 @@
       </div>
     </section>
 
-    <section class="double-grid users-grid">
-      <article class="card">
-        <div class="section-header">
-          <div>
-            <h2>Novo usuario</h2>
-            <p class="helper-text">Crie acessos separados para cada pessoa do time e escolha se ela pode ou nao administrar o sistema.</p>
-          </div>
-        </div>
-        <form class="user-form" method="post" action="/admin/users/create">
-          <label class="field">
-            <span>Nome de exibicao</span>
-            <input name="new_display_name" type="text" placeholder="Ex.: Pedro ou Financeiro">
-          </label>
-          <label class="field">
-            <span>Usuario</span>
-            <input name="new_username" type="text" placeholder="ex.: pedro" required>
-          </label>
-          <label class="field">
-            <span>Senha inicial</span>
-            <input name="new_password" type="password" placeholder="Minimo de 6 caracteres" required>
-          </label>
-          <label class="field">
-            <span>Perfil</span>
-            <select name="new_role">
-              <option value="operador">Operador</option>
-              <option value="admin">Administrador</option>
-            </select>
-          </label>
-          <button class="button button-primary" type="submit">Criar usuario</button>
-        </form>
-      </article>
-
+    <section class="users-grid">
       <article class="card">
         <div class="section-header">
           <div>
@@ -185,7 +154,8 @@
                 <td>{{ user.last_login_at or "Nunca" }}</td>
                 <td>
                   <div class="password-cell">
-                    <span class="user-badge user-badge-role">{{ user.passwordLabel }}</span>
+                    <span class="user-badge user-badge-role">Nao exibivel</span>
+                    <span class="helper-text">A senha atual fica protegida por hash.</span>
                     <label class="field compact-field">
                       <span>Redefinir senha</span>
                       <input form="user-form-{{ loop.index }}" name="new_password" type="password" placeholder="Nova senha">
