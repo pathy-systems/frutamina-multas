@@ -312,6 +312,7 @@ textarea:focus {
 .double-grid {
   display: grid;
   gap: 18px;
+  align-items: start;
 }
 
 .jobs-card {
@@ -320,6 +321,7 @@ textarea:focus {
 
 .operational-grid {
   margin-bottom: 20px;
+  grid-template-columns: minmax(320px, 0.92fr) minmax(0, 1.08fr);
 }
 
 .agent-card,
@@ -328,7 +330,7 @@ textarea:focus {
 }
 
 .stats-grid {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-bottom: 20px;
 }
 
@@ -745,9 +747,25 @@ code {
   font-family: "Cascadia Mono", "Consolas", monospace;
 }
 
+@media (max-width: 1180px) {
+  .stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .operational-grid,
+  .double-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 1024px) {
   .login-layout,
-  .stats-grid,
   .double-grid {
     grid-template-columns: 1fr;
   }
@@ -782,6 +800,10 @@ code {
 
   .section-header {
     flex-direction: column;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
   }
 
   .toast-banner {

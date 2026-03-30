@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime
+
+from .config import now_label
 from .scraper import run_sync
 from .store import FineStore
 
@@ -27,7 +28,7 @@ class SyncManager:
                 {
                     "status": "running",
                     "message": "Inicializando sincronizacao embutida.",
-                    "started_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                    "started_at": now_label(),
                     "finished_at": "",
                     "error": "",
                 }
@@ -49,7 +50,7 @@ class SyncManager:
             fines = run_sync(update)
             self._store.save(fines, actor="sync_embutida")
             with self._lock:
-                timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                timestamp = now_label()
                 snapshot = self._store.get_sync_snapshot()
                 snapshot.update(
                     {
@@ -64,7 +65,7 @@ class SyncManager:
                 self._store.save_sync_snapshot(snapshot)
         except Exception as exc:
             with self._lock:
-                timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                timestamp = now_label()
                 snapshot = self._store.get_sync_snapshot()
                 snapshot.update(
                     {

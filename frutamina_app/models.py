@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
 from decimal import Decimal
+
+from .config import now_label
 
 
 @dataclass
@@ -96,7 +97,7 @@ class SyncSnapshot:
 
     @staticmethod
     def _label_now() -> str:
-        return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        return now_label()
 
     def mark_running(self, message: str) -> None:
         self.status = "running"

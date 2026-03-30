@@ -1,0 +1,7 @@
+{
+  "agent_name": "frutamina-agent",
+  "status": "offline",
+  "message": "Aguardando heartbeat do agente.",
+  "current_job_id": "",
+  "last_seen_at": ""
+}

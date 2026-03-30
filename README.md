@@ -57,7 +57,7 @@ No Railway:
 1. Abra o projeto.
 2. Clique em `New`.
 3. Adicione um banco PostgreSQL.
-4. Conecte o banco ao servico web para expor `DATABASE_URL`.
+4. Conecte o banco ao servico web para expor `DATABASE_URL` ou `DATABASE_PUBLIC_URL`.
 
 ### Passo 2: variaveis do servico web
 
@@ -74,8 +74,9 @@ MOCK_SYNC=0
 Observacoes:
 
 - para a aplicacao subir no Railway, ela precisa escutar em `0.0.0.0` e usar a variavel `PORT`; isso ja foi ajustado no projeto
-- o Railway vai usar PostgreSQL automaticamente se `DATABASE_URL` estiver presente
+- o Railway vai usar PostgreSQL automaticamente se `DATABASE_URL` ou `DATABASE_PUBLIC_URL` estiver presente
 - o site no Railway passa a apenas registrar o pedido de leitura e armazenar os dados; a leitura real fica a cargo do agente local
+- se nenhum banco estiver configurado, o app cai para arquivos locais e esses dados podem sumir em redeploy
 
 ## Agente local da ANTT
 

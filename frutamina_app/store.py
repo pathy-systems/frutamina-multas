@@ -12,7 +12,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from .config import CONFIG, DATA_DIR, DOWNLOAD_DIR, ensure_directories
+from .config import CONFIG, DATA_DIR, DOWNLOAD_DIR, ensure_directories, now_label, now_local
 from .models import FineRecord, SyncSnapshot
 
 
@@ -27,7 +27,7 @@ NEW_FINE_HIGHLIGHT_DAYS = 7
 
 
 def _now_label() -> str:
-    return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    return now_label()
 
 
 def _parse_label_datetime(value: str) -> datetime | None:
@@ -41,7 +41,7 @@ def _is_recent_new(first_seen_at: str) -> bool:
     seen_at = _parse_label_datetime(first_seen_at)
     if not seen_at:
         return False
-    return (datetime.now() - seen_at).days < NEW_FINE_HIGHLIGHT_DAYS
+    return (now_local() - seen_at).days < NEW_FINE_HIGHLIGHT_DAYS
 
 
 def _format_brl(value: Decimal) -> str:
@@ -613,7 +613,7 @@ class FineStore:
             try:
                 seen_at = datetime.strptime(last_seen, "%d/%m/%Y %H:%M:%S")
                 grace_seconds = max(CONFIG.agent_poll_interval * 3, 45)
-                online = (datetime.now() - seen_at).total_seconds() <= grace_seconds
+                online = (now_local() - seen_at).total_seconds() <= grace_seconds
             except ValueError:
                 online = False
         status["online"] = online
