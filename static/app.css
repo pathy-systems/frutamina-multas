@@ -68,13 +68,18 @@ body {
 }
 
 .brand-mark {
-  font-size: 2rem;
-  font-weight: 900;
-  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  min-height: 72px;
 }
 
-.brand-green { color: var(--green); }
-.brand-blue { color: #8090ff; }
+.brand-logo {
+  display: block;
+  width: clamp(180px, 22vw, 280px);
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+}
 
 .brand-kicker,
 .hero-kicker,
