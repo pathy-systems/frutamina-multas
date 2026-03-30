@@ -264,6 +264,26 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return
 
+        if route == "/relatorio/multas":
+            user = _current_user(self)
+            if not user:
+                _redirect(self, "/login")
+                return
+
+            payload = _store.build_dashboard_payload()
+            _send_html(
+                self,
+                _render(
+                    "report_fines.html",
+                    page_title="Relatorio | Frutamina Multas",
+                    username=user.get("display_name") or user.get("username") or "",
+                    current_user=user,
+                    fines=payload.get("fines", []),
+                    summary=payload.get("summary", {}),
+                ),
+            )
+            return
+
         if route == "/admin/users":
             user = _current_user(self)
             if not user:
@@ -347,10 +367,18 @@ class AppHandler(SimpleHTTPRequestHandler):
                 _redirect(self, "/login")
                 return
 
-            payload = _store.build_csv_bytes()
+            params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+            scope = (params.get("scope") or ["all"])[0]
+            fines = None
+            filename = "multas_ativas.csv"
+            if scope == "visible":
+                fines = [fine for fine in _store.load() if fine.status_carteira != "quitada_confirmada"]
+                filename = "multas_visiveis.csv"
+
+            payload = _store.build_csv_bytes(fines)
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/csv; charset=utf-8")
-            self.send_header("Content-Disposition", 'attachment; filename="multas_ativas.csv"')
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)

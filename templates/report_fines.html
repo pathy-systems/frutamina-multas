@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="report-body">
+  <main class="report-shell">
+    <section class="card report-header">
+      <div class="report-heading">
+        <div class="brand-mark">
+          <img class="brand-logo" src="/static/img/logo.png" alt="Frutamina">
+        </div>
+        <p class="report-kicker">Relatorio | multas ANTT</p>
+        <h1>Tabela completa para exportacao</h1>
+        <p class="helper-text">
+          Use esta pagina para imprimir em PDF ou baixar em CSV toda a tabela visivel do dashboard.
+        </p>
+      </div>
+      <div class="report-actions print-hidden">
+        <a class="button button-secondary" href="/dashboard">Voltar ao dashboard</a>
+        <button class="button button-primary" type="button" onclick="window.print()">Exportar PDF</button>
+        <a class="button button-secondary" href="/export/csv?scope=visible">Exportar CSV</a>
+      </div>
+    </section>
+
+    <section class="stats-grid report-stats">
+      <article class="card stat-card">
+        <span>Total de multas</span>
+        <strong>{{ summary.total_fines or 0 }}</strong>
+      </article>
+      <article class="card stat-card">
+        <span>Valor total em boletos</span>
+        <strong>{{ summary.total_value or "R$ 0,00" }}</strong>
+      </article>
+      <article class="card stat-card">
+        <span>Novas em destaque</span>
+        <strong>{{ summary.new_count or 0 }}</strong>
+      </article>
+      <article class="card stat-card">
+        <span>Ultima atualizacao</span>
+        <strong>{{ summary.updated_at or "Sem sincronizacao" }}</strong>
+      </article>
+    </section>
+
+    <section class="card report-table-card">
+      <div class="section-header report-section-header">
+        <div>
+          <h2>Multas ativas</h2>
+          <p class="helper-text">Relatorio pronto para impressao com toda a carteira visivel do painel.</p>
+        </div>
+      </div>
+
+      {% if fines %}
+      <div class="table-wrapper report-table-wrapper">
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th>Auto</th>
+              <th>Tipo</th>
+              <th>Processo</th>
+              <th>Situacao</th>
+              <th>Data</th>
+              <th>Valor do boleto</th>
+              <th>Status interno</th>
+              <th>PDF</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for fine in fines %}
+            <tr class="{% if fine.isNew %}table-row-new{% endif %}">
+              <td>
+                <div class="cell-title">
+                  <div class="cell-inline">
+                    <strong>{{ fine.auto }}</strong>
+                    {% if fine.isNew %}
+                    <span class="new-badge">Nova</span>
+                    {% endif %}
+                  </div>
+                  <span class="cell-muted">{{ fine.autuado }}</span>
+                </div>
+              </td>
+              <td>{{ fine.tipo }}</td>
+              <td>{{ fine.processo }}</td>
+              <td>
+                <div class="cell-title">
+                  <span class="badge">{{ fine.situacao }}</span>
+                  <span class="cell-muted">{{ fine.statusCarteiraLabel }}</span>
+                </div>
+              </td>
+              <td>{{ fine.dataAuto }}</td>
+              <td>
+                {% if fine.valorDisponivel %}
+                <div class="value-cell">
+                  <strong>{{ fine.valor }}</strong>
+                  <span class="cell-muted">Valor do documento</span>
+                </div>
+                {% else %}
+                <div class="value-cell">
+                  <span class="value-pill {% if fine.boletoDisponivel %}value-pill-warning{% else %}value-pill-muted{% endif %}">
+                    {{ fine.mensagemValor }}
+                  </span>
+                </div>
+                {% endif %}
+              </td>
+              <td>{{ fine.statusCarteiraLabel }}</td>
+              <td>
+                {% if fine.pdfUrl %}
+                <a class="button button-secondary mini-button print-hidden" href="{{ fine.pdfUrl }}" target="_blank" rel="noopener noreferrer">Abrir PDF</a>
+                <span class="print-only">Disponivel</span>
+                {% else %}
+                <span class="value-pill value-pill-muted">Sem PDF</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state">Nenhuma multa ativa disponivel para exportacao.</div>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
