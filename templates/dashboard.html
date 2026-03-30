@@ -76,44 +76,6 @@
       </div>
     </section>
 
-    <section class="double-grid operational-grid">
-      <article class="card agent-card">
-        <div class="section-header">
-          <div>
-            <h2>Saude do agente</h2>
-            <p class="helper-text">Heartbeat do computador que abre a ANTT e executa a leitura.</p>
-          </div>
-        </div>
-        <div id="agentStatusCard" class="agent-status-panel">
-          <div class="agent-status-header">
-            <span class="agent-ping agent-offline"></span>
-            <div>
-              <strong>Sem sinal</strong>
-              <p>Agente local</p>
-            </div>
-          </div>
-          <div class="agent-status-body">
-            <p>Aguardando heartbeat do agente.</p>
-            <div class="agent-meta">
-              <span>Estado: offline</span>
-              <span>Job atual: nenhum</span>
-              <span>Ultimo sinal: Sem heartbeat</span>
-            </div>
-          </div>
-        </div>
-      </article>
-
-      <article class="card jobs-card">
-        <div class="section-header">
-          <div>
-            <h2>Fila de sincronizacao</h2>
-            <p class="helper-text">Ultimas solicitacoes feitas pelo dashboard e processadas pelo agente.</p>
-          </div>
-        </div>
-        <div id="jobsList" class="stack-list"></div>
-      </article>
-    </section>
-
     <section class="stats-grid">
       <article class="card stat-card">
         <span>Total de multas</span>
@@ -243,7 +205,7 @@
 
   <script id="initialDashboardPayload" type="application/json">{{ initial_payload_json | safe }}</script>
   <script id="initialSyncSnapshot" type="application/json">{{ sync_snapshot_json | safe }}</script>
-  <script id="appMeta" type="application/json">{{ {"syncMode": sync_mode, "databaseEnabled": database_enabled, "recentJobs": recent_jobs} | tojson | safe }}</script>
+  <script id="appMeta" type="application/json">{{ {"syncMode": sync_mode, "databaseEnabled": database_enabled} | tojson | safe }}</script>
   <script src="/static/app.js" defer></script>
   <div id="newFinesToast" class="toast-banner" hidden></div>
 </body>
