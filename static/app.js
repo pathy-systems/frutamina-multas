@@ -42,6 +42,25 @@
     return `${auto || ""}__${processo || ""}`;
   }
 
+  function historyIcon() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M6 4h9l3 3v13H6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+        <path d="M15 4v3h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+        <path d="M9 12h6M9 16h6M9 8h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+      </svg>
+    `;
+  }
+
+  function paidIcon() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.8"></circle>
+        <path d="M8.5 12.3l2.2 2.2 4.8-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+    `;
+  }
+
   function findReviewNoteField(key) {
     return Array.from(reviewList.querySelectorAll("textarea[data-key]")).find((node) => node.dataset.key === key) || null;
   }
@@ -296,20 +315,26 @@
           <td>
             <div class="table-actions">
               <button
-                class="button button-secondary table-action"
+                class="button button-secondary icon-button"
                 type="button"
                 data-action="open-history"
+                title="Abrir analise"
+                aria-label="Abrir analise"
                 data-auto="${escapeHtml(item.auto)}"
                 data-processo="${escapeHtml(item.processo)}">
-                Abrir analise
+                ${historyIcon()}
+                <span class="sr-only">Abrir analise</span>
               </button>
               <button
-                class="button button-secondary table-action"
+                class="button button-secondary icon-button icon-button-danger"
                 type="button"
                 data-action="mark-paid"
+                title="Marcar paga"
+                aria-label="Marcar paga"
                 data-auto="${escapeHtml(item.auto)}"
                 data-processo="${escapeHtml(item.processo)}">
-                Marcar paga
+                ${paidIcon()}
+                <span class="sr-only">Marcar paga</span>
               </button>
             </div>
           </td>

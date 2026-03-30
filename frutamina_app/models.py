@@ -24,6 +24,7 @@ class FineRecord:
     status_carteira: str = "ativa_sem_boleto"
     ja_teve_boleto: bool = False
     first_seen_at: str = ""
+    is_new: bool = False
     decision_trail: list[str] = field(default_factory=list)
     manual_override_status: str = ""
     manual_override_note: str = ""
@@ -79,6 +80,7 @@ class FineRecord:
             status_carteira=status_carteira,
             ja_teve_boleto=ja_teve_boleto,
             first_seen_at=str(payload.get("first_seen_at", "") or ""),
+            is_new=bool(payload.get("is_new", False)),
             decision_trail=[str(item) for item in payload.get("decision_trail", [])],
             manual_override_status=str(payload.get("manual_override_status", "") or ""),
             manual_override_note=str(payload.get("manual_override_note", "") or ""),

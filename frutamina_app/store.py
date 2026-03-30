@@ -23,7 +23,6 @@ JOBS_PATH = DATA_DIR / "sync_jobs.json"
 HISTORY_PATH = DATA_DIR / "fine_history.json"
 AGENT_STATUS_PATH = DATA_DIR / "agent_status.json"
 LEGACY_FIRST_SEEN_AT = "01/01/2000 00:00:00"
-NEW_FINE_HIGHLIGHT_DAYS = 7
 
 
 def _now_label() -> str:
@@ -35,13 +34,6 @@ def _parse_label_datetime(value: str) -> datetime | None:
         return datetime.strptime(value, "%d/%m/%Y %H:%M:%S")
     except (TypeError, ValueError):
         return None
-
-
-def _is_recent_new(first_seen_at: str) -> bool:
-    seen_at = _parse_label_datetime(first_seen_at)
-    if not seen_at:
-        return False
-    return (now_local() - seen_at).days < NEW_FINE_HIGHLIGHT_DAYS
 
 
 def _format_brl(value: Decimal) -> str:
@@ -158,6 +150,7 @@ class FineStore:
                         status_carteira TEXT NOT NULL DEFAULT 'ativa_sem_boleto',
                         ja_teve_boleto BOOLEAN NOT NULL DEFAULT FALSE,
                         first_seen_at TEXT NOT NULL DEFAULT '',
+                        is_new BOOLEAN NOT NULL DEFAULT FALSE,
                         decision_trail TEXT NOT NULL DEFAULT '[]',
                         manual_override_status TEXT NOT NULL DEFAULT '',
                         manual_override_note TEXT NOT NULL DEFAULT '',
@@ -178,6 +171,7 @@ class FineStore:
                 cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS status_carteira TEXT NOT NULL DEFAULT 'ativa_sem_boleto'")
                 cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS ja_teve_boleto BOOLEAN NOT NULL DEFAULT FALSE")
                 cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS first_seen_at TEXT NOT NULL DEFAULT ''")
+                cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS is_new BOOLEAN NOT NULL DEFAULT FALSE")
                 cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS decision_trail TEXT NOT NULL DEFAULT '[]'")
                 cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS manual_override_status TEXT NOT NULL DEFAULT ''")
                 cur.execute("ALTER TABLE fines ADD COLUMN IF NOT EXISTS manual_override_note TEXT NOT NULL DEFAULT ''")
@@ -271,7 +265,7 @@ class FineStore:
                         """
                         SELECT tipo_fiscalizacao, auto_infracao, numero_processo, autuado, situacao, data_auto,
                                valor_multa, pdf_nome, boleto_disponivel, valor_disponivel, mensagem_valor,
-                               fonte_valor, status_carteira, ja_teve_boleto, first_seen_at, decision_trail,
+                               fonte_valor, status_carteira, ja_teve_boleto, first_seen_at, is_new, decision_trail,
                                manual_override_status, manual_override_note, fonte
                         FROM fines
                         ORDER BY tipo_fiscalizacao, auto_infracao
@@ -306,6 +300,7 @@ class FineStore:
                         or Decimal(str(row["valor_multa"])) > Decimal("0")
                     ),
                     first_seen_at=str(row.get("first_seen_at") or ""),
+                    is_new=bool(row.get("is_new", False)),
                     decision_trail=json.loads(str(row.get("decision_trail") or "[]")),
                     manual_override_status=str(row.get("manual_override_status") or ""),
                     manual_override_note=str(row.get("manual_override_note") or ""),
@@ -353,6 +348,7 @@ class FineStore:
                             else bool(row.get("PDF", ""))
                         ),
                         first_seen_at=row.get("Primeira Aparicao", ""),
+                        is_new=(row.get("Nova na Ultima Leitura", "").strip().lower() == "sim"),
                         decision_trail=json.loads(row.get("Trilha de Decisao", "[]") or "[]"),
                         manual_override_status=row.get("Override Manual", ""),
                         manual_override_note=row.get("Nota Manual", ""),
@@ -511,6 +507,7 @@ class FineStore:
                         "valor_disponivel": fine.valor_disponivel,
                         "fonte_valor": fine.fonte_valor,
                         "first_seen_at": fine.first_seen_at,
+                        "is_new": fine.is_new,
                     },
                     ensure_ascii=False,
                 ),
@@ -583,6 +580,7 @@ class FineStore:
                     "manualOverrideStatus": details.get("manual_override_status", ""),
                     "manualOverrideNote": details.get("manual_override_note", ""),
                     "firstSeenAt": details.get("first_seen_at", ""),
+                    "isNew": bool(details.get("is_new", False)),
                 }
             )
         return history
@@ -713,6 +711,7 @@ class FineStore:
             current_has_boleto = fine.boleto_disponivel or fine.valor_disponivel
             previous_had_boleto = previous.ja_teve_boleto if previous else False
             fine.ja_teve_boleto = current_has_boleto or previous_had_boleto
+            fine.is_new = fine_is_new
             if previous and not preserve_current_overrides:
                 fine.manual_override_status = previous.manual_override_status
                 fine.manual_override_note = previous.manual_override_note
@@ -854,6 +853,7 @@ class FineStore:
                 "Status da Carteira",
                 "Ja Teve Boleto",
                 "Primeira Aparicao",
+                "Nova na Ultima Leitura",
                 "Trilha de Decisao",
                 "Override Manual",
                 "Nota Manual",
@@ -879,6 +879,7 @@ class FineStore:
                     "Status da Carteira": fine.status_carteira,
                     "Ja Teve Boleto": "Sim" if fine.ja_teve_boleto else "Nao",
                     "Primeira Aparicao": fine.first_seen_at,
+                    "Nova na Ultima Leitura": "Sim" if fine.is_new else "Nao",
                     "Trilha de Decisao": json.dumps(fine.decision_trail, ensure_ascii=False),
                     "Override Manual": fine.manual_override_status,
                     "Nota Manual": fine.manual_override_note,
@@ -892,7 +893,7 @@ class FineStore:
         visible_fines = [fine for fine in fines if fine.status_carteira != "quitada_confirmada"]
         review_items = [fine for fine in fines if fine.status_carteira == "revisar"]
         paid_items = [fine for fine in fines if fine.status_carteira == "quitada_confirmada"]
-        new_fines = [fine for fine in visible_fines if _is_recent_new(fine.first_seen_at)]
+        new_fines = [fine for fine in visible_fines if fine.is_new]
         pdf_names = self.available_pdf_names()
         fines_com_valor = [fine for fine in visible_fines if fine.valor_disponivel]
         total_valor = sum((fine.valor_multa for fine in fines_com_valor), Decimal("0"))
@@ -961,7 +962,7 @@ class FineStore:
                     "manualOverrideStatus": fine.manual_override_status,
                     "manualOverrideNote": fine.manual_override_note,
                     "firstSeenAt": fine.first_seen_at,
-                    "isNew": _is_recent_new(fine.first_seen_at),
+                    "isNew": fine.is_new,
                 }
                 for fine in review_items
             ],
@@ -978,7 +979,7 @@ class FineStore:
                     "manualOverrideStatus": fine.manual_override_status,
                     "manualOverrideNote": fine.manual_override_note,
                     "firstSeenAt": fine.first_seen_at,
-                    "isNew": _is_recent_new(fine.first_seen_at),
+                    "isNew": fine.is_new,
                 }
                 for fine in paid_items
             ],
@@ -999,7 +1000,7 @@ class FineStore:
                     "statusCarteiraLabel": _label_status_carteira(fine.status_carteira),
                     "jaTeveBoleto": fine.ja_teve_boleto,
                     "firstSeenAt": fine.first_seen_at,
-                    "isNew": _is_recent_new(fine.first_seen_at),
+                    "isNew": fine.is_new,
                     "decisionTrail": fine.decision_trail,
                     "manualOverrideStatus": fine.manual_override_status,
                     "manualOverrideNote": fine.manual_override_note,
