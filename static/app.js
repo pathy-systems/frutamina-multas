@@ -182,10 +182,18 @@
   const newFinesBannerTitle = byId("newFinesBannerTitle");
   const newFinesBannerText = byId("newFinesBannerText");
   const newFinesToast = byId("newFinesToast");
-  const tableExportButton = byId("tableExportButton");
-  const tableExportMenu = byId("tableExportMenu");
   const exportPdfButton = byId("exportPdfButton");
   const exportCsvButton = byId("exportCsvButton");
+
+  function resetHistoryPanel() {
+    if (!historyPanel) {
+      return;
+    }
+
+    currentHistoryTarget = null;
+    historyPanel.className = "history-panel empty-state";
+    historyPanel.innerHTML = "Selecione uma multa na tabela ou na fila de revisao para abrir o historico.";
+  }
 
   function findFine(auto, processo) {
     const key = buildLookupKey(auto, processo);
@@ -396,18 +404,6 @@
         </tr>
       `;
     }).join("");
-  }
-
-  function setExportMenuOpen(isOpen) {
-    if (!tableExportMenu || !tableExportButton) {
-      return;
-    }
-    tableExportMenu.hidden = !isOpen;
-    tableExportButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
-    tableExportButton.classList.toggle("is-open", isOpen);
-    if (!isOpen) {
-      tableExportButton.blur();
-    }
   }
 
   function exportFilteredTableAsPdf() {
@@ -780,8 +776,12 @@
     alert(errorPayload.message || errorPayload.error || "Falha ao cancelar sincronizacao.");
   }
 
-  async function submitManualReview(auto, processo, action, note) {
+  async function submitManualReview(auto, processo, action, note, options) {
+    const settings = options || {};
     const normalizedNote = action === "limpar_override" ? "" : (note || "");
+    if (settings.keepHistory === false) {
+      currentHistoryTarget = null;
+    }
     const response = await fetch("/api/fines/review", {
       method: "POST",
       credentials: "same-origin",
@@ -802,7 +802,7 @@
       return;
     }
 
-    await refreshDashboardData();
+    await refreshDashboardData({ keepHistory: settings.keepHistory !== false });
     await refreshSyncStatus();
   }
 
@@ -827,35 +827,14 @@
     await markFineAsPaid(auto, processo, note);
   });
 
-  if (tableExportButton && tableExportMenu) {
-    tableExportButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      setExportMenuOpen(tableExportMenu.hidden);
-    });
-
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        setExportMenuOpen(false);
-      }
-    });
-
-    document.addEventListener("click", (event) => {
-      if (!tableExportMenu.hidden && !event.target.closest(".export-menu-shell")) {
-        setExportMenuOpen(false);
-      }
-    });
-  }
-
   if (exportPdfButton) {
     exportPdfButton.addEventListener("click", () => {
-      setExportMenuOpen(false);
       exportFilteredTableAsPdf();
     });
   }
 
   if (exportCsvButton) {
     exportCsvButton.addEventListener("click", () => {
-      setExportMenuOpen(false);
       window.location.href = "/export/csv";
     });
   }
@@ -881,8 +860,13 @@
       noteField.value = "";
     }
     const note = noteField ? noteField.value : "";
-    await submitManualReview(auto, processo, action, note);
-    await openHistory(auto, processo);
+    const keepHistory = action !== "limpar_override";
+    await submitManualReview(auto, processo, action, note, { keepHistory });
+    if (keepHistory) {
+      await openHistory(auto, processo);
+      return;
+    }
+    resetHistoryPanel();
   });
 
   if (paidList) {
@@ -898,12 +882,17 @@
         return;
       }
 
+      const action = actionButton.dataset.paidAction || "";
       await submitManualReview(
         actionButton.dataset.auto || "",
         actionButton.dataset.processo || "",
-        actionButton.dataset.paidAction || "",
-        ""
+        action,
+        "",
+        { keepHistory: action !== "limpar_override" }
       );
+      if (action === "limpar_override") {
+        resetHistoryPanel();
+      }
     });
   }
 
@@ -922,8 +911,13 @@
       actionButton.dataset.auto || "",
       actionButton.dataset.processo || "",
       action,
-      noteField ? noteField.value : ""
+      noteField ? noteField.value : "",
+      { keepHistory: action !== "limpar_override" }
     );
+    if (action === "limpar_override") {
+      resetHistoryPanel();
+      return;
+    }
     await openHistory(actionButton.dataset.auto || "", actionButton.dataset.processo || "");
   });
 
