@@ -32,6 +32,9 @@
         {% if error_message %}
         <div class="alert alert-error">{{ error_message }}</div>
         {% endif %}
+        {% if request_message %}
+        <div class="alert {% if request_tone == 'error' %}alert-error{% else %}alert-info{% endif %}">{{ request_message }}</div>
+        {% endif %}
         <form class="login-form" method="post" action="/login">
           <label for="username">Usuario</label>
           <input id="username" name="username" type="text" autocomplete="username" required>
@@ -41,6 +44,25 @@
 
           <button class="button button-primary" type="submit">Entrar no dashboard</button>
         </form>
+
+        <div class="login-divider"></div>
+
+        <div class="request-account-block">
+          <h3>Solicitar nova conta</h3>
+          <p class="helper-text">Seu acesso fica pendente ate um administrador aprovar. Todas as novas contas entram como usuario comum.</p>
+          <form class="login-form" method="post" action="/account-request">
+            <label for="request_display_name">Seu nome</label>
+            <input id="request_display_name" name="display_name" type="text" autocomplete="name" required>
+
+            <label for="request_username">Login desejado</label>
+            <input id="request_username" name="username" type="text" autocomplete="username" required>
+
+            <label for="request_password">Senha desejada</label>
+            <input id="request_password" name="password" type="password" autocomplete="new-password" required>
+
+            <button class="button button-secondary" type="submit">Enviar solicitacao</button>
+          </form>
+        </div>
       </div>
     </section>
   </main>

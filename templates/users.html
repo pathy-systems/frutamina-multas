@@ -50,6 +50,50 @@
     </section>
     {% endif %}
 
+    <section class="card users-admin-card">
+      <div class="section-header">
+        <div>
+          <h2>Solicitacoes pendentes</h2>
+          <p class="helper-text">Aprovacoes criam automaticamente um usuario do tipo operador.</p>
+        </div>
+      </div>
+      <div class="table-wrapper admin-table-wrapper">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Solicitada em</th>
+              <th>Nome</th>
+              <th>Login</th>
+              <th>Status</th>
+              <th>Acao</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for request in pending_requests %}
+            <tr>
+              <td>{{ request.requested_at or "Sem data" }}</td>
+              <td>{{ request.display_name }}</td>
+              <td>@{{ request.username }}</td>
+              <td><span class="user-badge user-badge-role">{{ request.statusLabel }}</span></td>
+              <td>
+                <form class="inline-review-form" method="post" action="/admin/requests/review">
+                  <input type="hidden" name="request_id" value="{{ request.request_id }}">
+                  <input name="review_note" type="text" placeholder="Observacao opcional">
+                  <button class="button button-primary mini-button" type="submit" name="action" value="approve">Aceitar</button>
+                  <button class="button button-danger mini-button" type="submit" name="action" value="reject">Recusar</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="5"><div class="empty-state">Nenhuma solicitacao pendente no momento.</div></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="double-grid users-grid">
       <article class="card">
         <div class="section-header">
@@ -86,60 +130,82 @@
         <div class="section-header">
           <div>
             <h2>Usuarios cadastrados</h2>
-            <p class="helper-text">Atualize nome, perfil, senha e status. O ultimo administrador ativo fica protegido automaticamente.</p>
+            <p class="helper-text">Tabela detalhada com status de acesso, ultimo login e redefinicao de senha segura.</p>
           </div>
         </div>
-        <div class="users-list">
-          {% for user in users %}
-          <form class="user-card" method="post" action="/admin/users/update">
-            <input type="hidden" name="username" value="{{ user.username }}">
-            <div class="user-card-head">
-              <div>
-                <strong>{{ user.display_name or user.username }}</strong>
-                <p>@{{ user.username }}</p>
-              </div>
-              <div class="user-badges">
-                <span class="user-badge {% if user.is_active %}user-badge-active{% else %}user-badge-inactive{% endif %}">
-                  {% if user.is_active %}Ativo{% else %}Inativo{% endif %}
-                </span>
-                <span class="user-badge user-badge-role">{{ user.roleLabel }}</span>
-                {% if user.username == current_user.username %}
-                <span class="user-badge user-badge-current">Voce</span>
-                {% endif %}
-              </div>
-            </div>
-            <div class="user-card-grid">
-              <label class="field">
-                <span>Nome de exibicao</span>
-                <input name="display_name" type="text" value="{{ user.display_name or user.username }}">
-              </label>
-              <label class="field">
-                <span>Perfil</span>
-                <select name="role">
-                  <option value="operador" {% if user.role == "operador" %}selected{% endif %}>Operador</option>
-                  <option value="admin" {% if user.role == "admin" %}selected{% endif %}>Administrador</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Nova senha</span>
-                <input name="new_password" type="password" placeholder="Deixe em branco para manter">
-              </label>
-              <label class="checkbox-field">
-                <input type="checkbox" name="is_active" value="1" {% if user.is_active %}checked{% endif %}>
-                <span>Usuario ativo</span>
-              </label>
-            </div>
-            <div class="user-meta">
-              <span>Criado em {{ user.created_at or "Sem data" }}</span>
-              <span>Ultimo acesso: {{ user.last_login_at or "Nunca" }}</span>
-            </div>
-            <div class="user-actions">
-              <button class="button button-secondary" type="submit">Salvar alteracoes</button>
-            </div>
-          </form>
-          {% else %}
-          <div class="empty-state">Nenhum usuario cadastrado ainda.</div>
-          {% endfor %}
+        <div class="table-wrapper admin-table-wrapper">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Login</th>
+                <th>Perfil</th>
+                <th>Status</th>
+                <th>Online</th>
+                <th>Ultimo acesso</th>
+                <th>Senha</th>
+                <th>Alteracoes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for user in users %}
+              <tr>
+                <td>
+                  <label class="field compact-field">
+                    <span>Nome</span>
+                    <input form="user-form-{{ loop.index }}" name="display_name" type="text" value="{{ user.display_name or user.username }}">
+                  </label>
+                  {% if user.username == current_user.username %}
+                  <span class="user-badge user-badge-current">Voce</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <strong>@{{ user.username }}</strong>
+                </td>
+                <td>
+                  <label class="field compact-field">
+                    <span>Perfil</span>
+                    <select form="user-form-{{ loop.index }}" name="role">
+                      <option value="operador" {% if user.role == "operador" %}selected{% endif %}>Operador</option>
+                      <option value="admin" {% if user.role == "admin" %}selected{% endif %}>Administrador</option>
+                    </select>
+                  </label>
+                </td>
+                <td>
+                  <label class="checkbox-field">
+                    <input form="user-form-{{ loop.index }}" type="checkbox" name="is_active" value="1" {% if user.is_active %}checked{% endif %}>
+                    <span>{% if user.is_active %}Ativo{% else %}Inativo{% endif %}</span>
+                  </label>
+                </td>
+                <td>
+                  <span class="user-badge {% if user.isOnline %}user-badge-active{% else %}user-badge-inactive{% endif %}">
+                    {{ user.onlineLabel }}
+                  </span>
+                </td>
+                <td>{{ user.last_login_at or "Nunca" }}</td>
+                <td>
+                  <div class="password-cell">
+                    <span class="user-badge user-badge-role">{{ user.passwordLabel }}</span>
+                    <label class="field compact-field">
+                      <span>Redefinir senha</span>
+                      <input form="user-form-{{ loop.index }}" name="new_password" type="password" placeholder="Nova senha">
+                    </label>
+                  </div>
+                </td>
+                <td>
+                  <form id="user-form-{{ loop.index }}" method="post" action="/admin/users/update">
+                    <input type="hidden" name="username" value="{{ user.username }}">
+                  </form>
+                  <button form="user-form-{{ loop.index }}" class="button button-secondary mini-button" type="submit">Salvar</button>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="8"><div class="empty-state">Nenhum usuario cadastrado ainda.</div></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
       </article>
     </section>

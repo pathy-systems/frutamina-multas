@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+import time
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -18,6 +19,7 @@ from .sync_manager import SyncManager
 
 
 SESSION_COOKIE = "frutamina_session"
+SESSION_ONLINE_WINDOW_SECONDS = 300
 
 _env = Environment(
     loader=FileSystemLoader(str(TEMPLATE_DIR)),
@@ -25,7 +27,7 @@ _env = Environment(
 )
 _store = FineStore()
 _sync_manager = SyncManager(_store)
-_sessions: dict[str, str] = {}
+_sessions: dict[str, dict[str, object]] = {}
 _sessions_lock = threading.Lock()
 
 
@@ -35,12 +37,17 @@ def _render(template_name: str, **context: object) -> str:
 
 def _create_session(username: str) -> str:
     token = secrets.token_urlsafe(32)
+    now = time.time()
     with _sessions_lock:
-        _sessions[token] = username
+        _sessions[token] = {
+            "username": username,
+            "created_at": now,
+            "last_seen_at": now,
+        }
     return token
 
 
-def _session_username(handler: SimpleHTTPRequestHandler) -> str | None:
+def _session_record(handler: SimpleHTTPRequestHandler, touch: bool = True) -> dict[str, object] | None:
     raw_cookie = handler.headers.get("Cookie")
     if not raw_cookie:
         return None
@@ -52,11 +59,35 @@ def _session_username(handler: SimpleHTTPRequestHandler) -> str | None:
         return None
 
     with _sessions_lock:
-        return _sessions.get(token.value)
+        record = _sessions.get(token.value)
+        if not record:
+            return None
+        if touch:
+            record["last_seen_at"] = time.time()
+        return dict(record)
+
+
+def _active_usernames() -> set[str]:
+    threshold = time.time() - SESSION_ONLINE_WINDOW_SECONDS
+    active: set[str] = set()
+    with _sessions_lock:
+        stale_tokens = [
+            token
+            for token, record in _sessions.items()
+            if float(record.get("last_seen_at", 0) or 0) < threshold
+        ]
+        for token in stale_tokens:
+            _sessions.pop(token, None)
+        for record in _sessions.values():
+            username = str(record.get("username") or "")
+            if username:
+                active.add(username)
+    return active
 
 
 def _current_user(handler: SimpleHTTPRequestHandler) -> dict[str, object] | None:
-    username = _session_username(handler)
+    session = _session_record(handler)
+    username = str(session.get("username") or "") if session else ""
     if not username:
         return None
     user = _store.get_user(username)
@@ -174,7 +205,17 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         if route == "/login":
-            _send_html(self, _render("login.html", page_title="Login | Frutamina Multas", error_message=""))
+            params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+            _send_html(
+                self,
+                _render(
+                    "login.html",
+                    page_title="Login | Frutamina Multas",
+                    error_message="",
+                    request_message=(params.get("request_message") or [""])[0],
+                    request_tone=(params.get("request_tone") or ["info"])[0],
+                ),
+            )
             return
 
         if route == "/logout":
@@ -220,6 +261,15 @@ class AppHandler(SimpleHTTPRequestHandler):
                 _redirect(self, _dashboard_location("Somente administradores podem acessar a gestao de usuarios.", "error"))
                 return
 
+            active_usernames = _active_usernames()
+            users = []
+            for row in _store.list_users():
+                username = str(row.get("username") or "")
+                row["isOnline"] = username in active_usernames
+                row["onlineLabel"] = "Online" if row["isOnline"] else "Offline"
+                row["passwordLabel"] = "Protegida"
+                users.append(row)
+
             params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
             _send_html(
                 self,
@@ -229,7 +279,8 @@ class AppHandler(SimpleHTTPRequestHandler):
                     username=user.get("display_name") or user.get("username") or "",
                     current_user=user,
                     is_admin=True,
-                    users=_store.list_users(),
+                    users=users,
+                    pending_requests=_store.list_account_requests("pending"),
                     admin_message=(params.get("admin_message") or [""])[0],
                     admin_tone=(params.get("admin_tone") or ["info"])[0],
                     mock_mode=CONFIG.mock_sync,
@@ -340,9 +391,25 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "login.html",
                     page_title="Login | Frutamina Multas",
                     error_message="Usuario ou senha invalidos.",
+                    request_message="",
+                    request_tone="info",
                 ),
                 HTTPStatus.UNAUTHORIZED,
             )
+            return
+
+        if route == "/account-request":
+            form = _read_form(self)
+            ok, message = _store.submit_account_request(
+                display_name=form.get("display_name", ""),
+                username=form.get("username", ""),
+                password=form.get("password", ""),
+            )
+            query = urlencode({
+                "request_message": message,
+                "request_tone": "info" if ok else "error",
+            })
+            _redirect(self, f"/login?{query}")
             return
 
         if route == "/admin/users/create":
@@ -361,6 +428,25 @@ class AppHandler(SimpleHTTPRequestHandler):
                 role=form.get("new_role", "operador"),
                 display_name=form.get("new_display_name", ""),
                 actor=str(user.get("username") or ""),
+            )
+            _redirect(self, _users_location(message, "info" if ok else "error"))
+            return
+
+        if route == "/admin/requests/review":
+            user = _current_user(self)
+            if not user:
+                _redirect(self, "/login")
+                return
+            if user.get("role") != "admin":
+                _redirect(self, _dashboard_location("Somente administradores podem gerenciar solicitacoes.", "error"))
+                return
+
+            form = _read_form(self)
+            ok, message = _store.review_account_request(
+                request_id=form.get("request_id", ""),
+                action=form.get("action", ""),
+                actor=str(user.get("username") or ""),
+                note=form.get("review_note", ""),
             )
             _redirect(self, _users_location(message, "info" if ok else "error"))
             return

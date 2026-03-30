@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from .config import CONFIG, DATA_DIR, DOWNLOAD_DIR, ensure_directories, now_label, now_local
-from .models import FineRecord, SyncSnapshot, UserRecord
+from .models import AccountRequestRecord, FineRecord, SyncSnapshot, UserRecord
 
 
 JSON_PATH = DATA_DIR / "multas_ativas.json"
@@ -26,6 +26,7 @@ JOBS_PATH = DATA_DIR / "sync_jobs.json"
 HISTORY_PATH = DATA_DIR / "fine_history.json"
 AGENT_STATUS_PATH = DATA_DIR / "agent_status.json"
 USERS_PATH = DATA_DIR / "users.json"
+ACCOUNT_REQUESTS_PATH = DATA_DIR / "account_requests.json"
 LEGACY_FIRST_SEEN_AT = "01/01/2000 00:00:00"
 
 
@@ -106,6 +107,14 @@ def _label_user_role(role: str) -> str:
     }.get(role, "Operador")
 
 
+def _label_request_status(status: str) -> str:
+    return {
+        "pending": "Pendente",
+        "approved": "Aprovada",
+        "rejected": "Recusada",
+    }.get(status, "Pendente")
+
+
 def _normalize_username(value: str) -> str:
     return (value or "").strip().lower()
 
@@ -164,6 +173,8 @@ class FineStore:
             )
         if not USERS_PATH.exists():
             USERS_PATH.write_text("[]", encoding="utf-8")
+        if not ACCOUNT_REQUESTS_PATH.exists():
+            ACCOUNT_REQUESTS_PATH.write_text("[]", encoding="utf-8")
 
     def _connect(self):
         try:
@@ -304,6 +315,21 @@ class FineStore:
                 )
                 cur.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS account_requests (
+                        request_id TEXT PRIMARY KEY,
+                        username TEXT NOT NULL,
+                        display_name TEXT NOT NULL DEFAULT '',
+                        password_hash TEXT NOT NULL DEFAULT '',
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        requested_at TEXT NOT NULL DEFAULT '',
+                        reviewed_at TEXT NOT NULL DEFAULT '',
+                        reviewed_by TEXT NOT NULL DEFAULT '',
+                        review_note TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                cur.execute(
+                    """
                     INSERT INTO sync_snapshot (singleton, status, message, started_at, finished_at, last_success_at, total_fines, error)
                     VALUES (TRUE, 'idle', 'Pronto para sincronizar.', '', '', '', 0, '')
                     ON CONFLICT (singleton) DO NOTHING
@@ -387,6 +413,74 @@ class FineStore:
             encoding="utf-8",
         )
 
+    def _load_account_requests(self) -> list[AccountRequestRecord]:
+        if self.uses_database:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT request_id, username, display_name, password_hash, status, requested_at,
+                               reviewed_at, reviewed_by, review_note
+                        FROM account_requests
+                        ORDER BY requested_at DESC
+                        """
+                    )
+                    rows = cur.fetchall()
+            return [
+                AccountRequestRecord(
+                    request_id=str(row.get("request_id") or ""),
+                    username=str(row.get("username") or ""),
+                    display_name=str(row.get("display_name") or ""),
+                    password_hash=str(row.get("password_hash") or ""),
+                    status=str(row.get("status") or "pending"),
+                    requested_at=str(row.get("requested_at") or ""),
+                    reviewed_at=str(row.get("reviewed_at") or ""),
+                    reviewed_by=str(row.get("reviewed_by") or ""),
+                    review_note=str(row.get("review_note") or ""),
+                )
+                for row in rows
+            ]
+
+        self._ensure_file_state()
+        return [
+            AccountRequestRecord.from_dict(item)
+            for item in json.loads(ACCOUNT_REQUESTS_PATH.read_text(encoding="utf-8"))
+        ]
+
+    def _save_account_requests(self, requests: list[AccountRequestRecord]) -> None:
+        if self.uses_database:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM account_requests")
+                    for request in requests:
+                        cur.execute(
+                            """
+                            INSERT INTO account_requests (
+                                request_id, username, display_name, password_hash, status,
+                                requested_at, reviewed_at, reviewed_by, review_note
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                request.request_id,
+                                request.username,
+                                request.display_name,
+                                request.password_hash,
+                                request.status,
+                                request.requested_at,
+                                request.reviewed_at,
+                                request.reviewed_by,
+                                request.review_note,
+                            ),
+                        )
+                conn.commit()
+            return
+
+        ACCOUNT_REQUESTS_PATH.write_text(
+            json.dumps([request.to_dict() for request in requests], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
     def _ensure_seed_admin(self) -> None:
         username = _normalize_username(CONFIG.dashboard_user)
         password = CONFIG.dashboard_password or ""
@@ -452,6 +546,17 @@ class FineStore:
             payload.append(public)
         return payload
 
+    def list_account_requests(self, status: str | None = None) -> list[dict[str, object]]:
+        requests = self._load_account_requests()
+        if status:
+            requests = [request for request in requests if request.status == status]
+        payload: list[dict[str, object]] = []
+        for request in requests:
+            public = request.to_public_dict()
+            public["statusLabel"] = _label_request_status(request.status)
+            payload.append(public)
+        return payload
+
     def _active_admin_count(self, users: list[UserRecord]) -> int:
         return sum(1 for user in users if user.is_active and user.role == "admin")
 
@@ -491,6 +596,83 @@ class FineStore:
         )
         self._save_users(users)
         return True, "Usuario criado com sucesso."
+
+    def submit_account_request(self, display_name: str, username: str, password: str) -> tuple[bool, str]:
+        normalized = _normalize_username(username)
+        if not re.fullmatch(r"[a-z0-9._-]{3,40}", normalized):
+            return False, "Escolha um login com 3 a 40 caracteres usando letras, numeros, ponto, hifen ou underline."
+        if len(password or "") < 6:
+            return False, "A senha precisa ter pelo menos 6 caracteres."
+        if self.get_user(normalized, include_secret=True):
+            return False, "Ja existe um usuario com esse login."
+
+        requests = self._load_account_requests()
+        if any(request.username == normalized and request.status == "pending" for request in requests):
+            return False, "Ja existe uma solicitacao pendente para esse login."
+
+        requests.insert(
+            0,
+            AccountRequestRecord(
+                request_id=str(uuid.uuid4()),
+                username=normalized,
+                display_name=(display_name or normalized).strip(),
+                password_hash=_hash_password(password),
+                status="pending",
+                requested_at=_now_label(),
+            ),
+        )
+        self._save_account_requests(requests)
+        return True, "Solicitacao enviada. Aguarde a aprovacao de um administrador."
+
+    def review_account_request(
+        self,
+        request_id: str,
+        action: str,
+        actor: str,
+        note: str = "",
+    ) -> tuple[bool, str]:
+        if action not in {"approve", "reject"}:
+            return False, "Acao de solicitacao invalida."
+
+        requests = self._load_account_requests()
+        target = next((request for request in requests if request.request_id == request_id), None)
+        if not target:
+            return False, "Solicitacao nao encontrada."
+        if target.status != "pending":
+            return False, "Essa solicitacao ja foi processada."
+
+        if action == "approve":
+            if self.get_user(target.username, include_secret=True):
+                return False, "Ja existe um usuario com esse login."
+            users = self._load_users()
+            timestamp = _now_label()
+            users.append(
+                UserRecord(
+                    username=target.username,
+                    password_hash=target.password_hash,
+                    role="operador",
+                    display_name=target.display_name or target.username,
+                    is_active=True,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    last_login_at="",
+                    created_by=actor,
+                )
+            )
+            self._save_users(users)
+            target.status = "approved"
+            target.reviewed_at = timestamp
+            target.reviewed_by = actor
+            target.review_note = (note or "").strip()
+            self._save_account_requests(requests)
+            return True, "Solicitacao aprovada e usuario criado como operador."
+
+        target.status = "rejected"
+        target.reviewed_at = _now_label()
+        target.reviewed_by = actor
+        target.review_note = (note or "").strip()
+        self._save_account_requests(requests)
+        return True, "Solicitacao recusada."
 
     def update_user(
         self,

@@ -174,6 +174,21 @@ body {
   margin-top: 20px;
 }
 
+.login-divider {
+  height: 1px;
+  margin: 26px 0 22px;
+  background: linear-gradient(90deg, transparent, rgba(17, 35, 66, 0.12), transparent);
+}
+
+.request-account-block {
+  display: grid;
+  gap: 8px;
+}
+
+.request-account-block h3 {
+  margin: 0;
+}
+
 input,
 select,
 textarea,
@@ -724,6 +739,11 @@ th {
   margin-top: 20px;
 }
 
+.users-admin-card {
+  padding: 26px;
+  margin-top: 20px;
+}
+
 .manual-groups {
   display: grid;
   gap: 24px;
@@ -810,6 +830,42 @@ th {
 .users-list {
   display: grid;
   gap: 14px;
+}
+
+.admin-table-wrapper {
+  margin-top: 16px;
+}
+
+.admin-table {
+  min-width: 1080px;
+}
+
+.admin-table td {
+  vertical-align: middle;
+}
+
+.compact-field {
+  gap: 6px;
+  font-weight: 600;
+}
+
+.compact-field span {
+  font-size: 0.82rem;
+}
+
+.inline-review-form {
+  display: grid;
+  gap: 10px;
+}
+
+.inline-review-form input {
+  min-width: 220px;
+}
+
+.password-cell {
+  display: grid;
+  gap: 10px;
+  min-width: 220px;
 }
 
 .user-card {

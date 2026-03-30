@@ -167,3 +167,45 @@ class UserRecord:
             last_login_at=str(payload.get("last_login_at", "") or ""),
             created_by=str(payload.get("created_by", "") or ""),
         )
+
+
+@dataclass
+class AccountRequestRecord:
+    request_id: str
+    username: str
+    display_name: str
+    password_hash: str
+    status: str = "pending"
+    requested_at: str = ""
+    reviewed_at: str = ""
+    reviewed_by: str = ""
+    review_note: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+    def to_public_dict(self) -> dict[str, object]:
+        return {
+            "request_id": self.request_id,
+            "username": self.username,
+            "display_name": self.display_name or self.username,
+            "status": self.status,
+            "requested_at": self.requested_at,
+            "reviewed_at": self.reviewed_at,
+            "reviewed_by": self.reviewed_by,
+            "review_note": self.review_note,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "AccountRequestRecord":
+        return cls(
+            request_id=str(payload.get("request_id", "") or ""),
+            username=str(payload.get("username", "")).strip().lower(),
+            display_name=str(payload.get("display_name", "") or ""),
+            password_hash=str(payload.get("password_hash", "") or ""),
+            status=str(payload.get("status", "pending") or "pending"),
+            requested_at=str(payload.get("requested_at", "") or ""),
+            reviewed_at=str(payload.get("reviewed_at", "") or ""),
+            reviewed_by=str(payload.get("reviewed_by", "") or ""),
+            review_note=str(payload.get("review_note", "") or ""),
+        )
