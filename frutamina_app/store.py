@@ -3,9 +3,12 @@ from __future__ import annotations
 import base64
 import binascii
 import csv
+import hashlib
+import hmac
 import io
 import json
 import re
+import secrets
 import unicodedata
 import uuid
 from datetime import datetime
@@ -13,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from .config import CONFIG, DATA_DIR, DOWNLOAD_DIR, ensure_directories, now_label, now_local
-from .models import FineRecord, SyncSnapshot
+from .models import FineRecord, SyncSnapshot, UserRecord
 
 
 JSON_PATH = DATA_DIR / "multas_ativas.json"
@@ -22,6 +25,7 @@ SNAPSHOT_PATH = DATA_DIR / "sync_snapshot.json"
 JOBS_PATH = DATA_DIR / "sync_jobs.json"
 HISTORY_PATH = DATA_DIR / "fine_history.json"
 AGENT_STATUS_PATH = DATA_DIR / "agent_status.json"
+USERS_PATH = DATA_DIR / "users.json"
 LEGACY_FIRST_SEEN_AT = "01/01/2000 00:00:00"
 
 
@@ -95,6 +99,46 @@ def _default_agent_status() -> dict[str, object]:
     }
 
 
+def _label_user_role(role: str) -> str:
+    return {
+        "admin": "Administrador",
+        "operador": "Operador",
+    }.get(role, "Operador")
+
+
+def _normalize_username(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    iterations = 180_000
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return (
+        f"pbkdf2_sha256${iterations}"
+        f"${base64.b64encode(salt).decode('ascii')}"
+        f"${base64.b64encode(digest).decode('ascii')}"
+    )
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, raw_iterations, raw_salt, raw_digest = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        salt = base64.b64decode(raw_salt.encode("ascii"))
+        expected = base64.b64decode(raw_digest.encode("ascii"))
+        computed = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt,
+            int(raw_iterations),
+        )
+        return hmac.compare_digest(computed, expected)
+    except (ValueError, TypeError, binascii.Error):
+        return False
+
+
 class FineStore:
     def __init__(self) -> None:
         ensure_directories()
@@ -104,6 +148,7 @@ class FineStore:
             self._ensure_postgres_schema()
         else:
             self._ensure_file_state()
+        self._ensure_seed_admin()
 
     def _ensure_file_state(self) -> None:
         if not SNAPSHOT_PATH.exists():
@@ -117,6 +162,8 @@ class FineStore:
                 json.dumps(_default_agent_status(), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+        if not USERS_PATH.exists():
+            USERS_PATH.write_text("[]", encoding="utf-8")
 
     def _connect(self):
         try:
@@ -242,6 +289,21 @@ class FineStore:
                 )
                 cur.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS app_users (
+                        username TEXT PRIMARY KEY,
+                        password_hash TEXT NOT NULL DEFAULT '',
+                        role TEXT NOT NULL DEFAULT 'operador',
+                        display_name TEXT NOT NULL DEFAULT '',
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at TEXT NOT NULL DEFAULT '',
+                        updated_at TEXT NOT NULL DEFAULT '',
+                        last_login_at TEXT NOT NULL DEFAULT '',
+                        created_by TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                cur.execute(
+                    """
                     INSERT INTO sync_snapshot (singleton, status, message, started_at, finished_at, last_success_at, total_fines, error)
                     VALUES (TRUE, 'idle', 'Pronto para sincronizar.', '', '', '', 0, '')
                     ON CONFLICT (singleton) DO NOTHING
@@ -256,6 +318,215 @@ class FineStore:
                     (CONFIG.sync_agent_name,),
                 )
             conn.commit()
+
+    def _load_users(self) -> list[UserRecord]:
+        if self.uses_database:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT username, password_hash, role, display_name, is_active, created_at, updated_at,
+                               last_login_at, created_by
+                        FROM app_users
+                        ORDER BY role DESC, username ASC
+                        """
+                    )
+                    rows = cur.fetchall()
+            return [
+                UserRecord(
+                    username=str(row.get("username") or ""),
+                    password_hash=str(row.get("password_hash") or ""),
+                    role=str(row.get("role") or "operador"),
+                    display_name=str(row.get("display_name") or ""),
+                    is_active=bool(row.get("is_active", True)),
+                    created_at=str(row.get("created_at") or ""),
+                    updated_at=str(row.get("updated_at") or ""),
+                    last_login_at=str(row.get("last_login_at") or ""),
+                    created_by=str(row.get("created_by") or ""),
+                )
+                for row in rows
+            ]
+
+        self._ensure_file_state()
+        return [
+            UserRecord.from_dict(item)
+            for item in json.loads(USERS_PATH.read_text(encoding="utf-8"))
+        ]
+
+    def _save_users(self, users: list[UserRecord]) -> None:
+        if self.uses_database:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM app_users")
+                    for user in users:
+                        cur.execute(
+                            """
+                            INSERT INTO app_users (
+                                username, password_hash, role, display_name, is_active,
+                                created_at, updated_at, last_login_at, created_by
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                user.username,
+                                user.password_hash,
+                                user.role,
+                                user.display_name,
+                                user.is_active,
+                                user.created_at,
+                                user.updated_at,
+                                user.last_login_at,
+                                user.created_by,
+                            ),
+                        )
+                conn.commit()
+            return
+
+        USERS_PATH.write_text(
+            json.dumps([user.to_dict() for user in users], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _ensure_seed_admin(self) -> None:
+        username = _normalize_username(CONFIG.dashboard_user)
+        password = CONFIG.dashboard_password or ""
+        if not username or not password:
+            return
+
+        existing = self.get_user(username, include_secret=True)
+        if existing:
+            return
+
+        self.create_user(
+            username=username,
+            password=password,
+            role="admin",
+            display_name="Administrador",
+            actor="bootstrap",
+        )
+
+    def get_user(self, username: str, include_secret: bool = False) -> UserRecord | dict[str, object] | None:
+        normalized = _normalize_username(username)
+        if not normalized:
+            return None
+
+        for user in self._load_users():
+            if user.username == normalized:
+                return user if include_secret else user.to_public_dict()
+        return None
+
+    def authenticate_user(self, username: str, password: str) -> dict[str, object] | None:
+        user = self.get_user(username, include_secret=True)
+        if not isinstance(user, UserRecord):
+            return None
+        if not user.is_active or not _verify_password(password or "", user.password_hash):
+            return None
+        self.record_user_login(user.username)
+        public_user = user.to_public_dict()
+        public_user["roleLabel"] = _label_user_role(user.role)
+        return public_user
+
+    def record_user_login(self, username: str) -> None:
+        normalized = _normalize_username(username)
+        if not normalized:
+            return
+
+        users = self._load_users()
+        changed = False
+        for user in users:
+            if user.username == normalized:
+                user.last_login_at = _now_label()
+                user.updated_at = user.last_login_at
+                changed = True
+                break
+        if changed:
+            self._save_users(users)
+
+    def list_users(self) -> list[dict[str, object]]:
+        users = self._load_users()
+        users.sort(key=lambda item: (not item.is_active, item.role != "admin", item.username))
+        payload: list[dict[str, object]] = []
+        for user in users:
+            public = user.to_public_dict()
+            public["roleLabel"] = _label_user_role(user.role)
+            payload.append(public)
+        return payload
+
+    def _active_admin_count(self, users: list[UserRecord]) -> int:
+        return sum(1 for user in users if user.is_active and user.role == "admin")
+
+    def create_user(
+        self,
+        username: str,
+        password: str,
+        role: str,
+        display_name: str,
+        actor: str,
+    ) -> tuple[bool, str]:
+        normalized = _normalize_username(username)
+        if not re.fullmatch(r"[a-z0-9._-]{3,40}", normalized):
+            return False, "O usuario deve ter de 3 a 40 caracteres usando apenas letras, numeros, ponto, hifen ou underline."
+        if len(password or "") < 6:
+            return False, "A senha precisa ter pelo menos 6 caracteres."
+        if role not in {"admin", "operador"}:
+            return False, "Perfil de usuario invalido."
+
+        users = self._load_users()
+        if any(user.username == normalized for user in users):
+            return False, "Ja existe um usuario com esse login."
+
+        timestamp = _now_label()
+        users.append(
+            UserRecord(
+                username=normalized,
+                password_hash=_hash_password(password),
+                role=role,
+                display_name=(display_name or normalized).strip(),
+                is_active=True,
+                created_at=timestamp,
+                updated_at=timestamp,
+                last_login_at="",
+                created_by=actor,
+            )
+        )
+        self._save_users(users)
+        return True, "Usuario criado com sucesso."
+
+    def update_user(
+        self,
+        username: str,
+        display_name: str,
+        role: str,
+        is_active: bool,
+        new_password: str,
+        actor: str,
+        acting_username: str,
+    ) -> tuple[bool, str]:
+        normalized = _normalize_username(username)
+        if role not in {"admin", "operador"}:
+            return False, "Perfil de usuario invalido."
+        if new_password and len(new_password) < 6:
+            return False, "A nova senha precisa ter pelo menos 6 caracteres."
+
+        users = self._load_users()
+        target = next((user for user in users if user.username == normalized), None)
+        if not target:
+            return False, "Usuario nao encontrado."
+
+        active_admins = self._active_admin_count(users)
+        if target.username == _normalize_username(acting_username) and not is_active:
+            return False, "Voce nao pode desativar o proprio usuario."
+        if target.role == "admin" and target.is_active and ((role != "admin") or (not is_active)) and active_admins <= 1:
+            return False, "Mantenha pelo menos um administrador ativo no sistema."
+
+        target.display_name = (display_name or target.username).strip()
+        target.role = role
+        target.is_active = is_active
+        if new_password:
+            target.password_hash = _hash_password(new_password)
+        target.updated_at = _now_label()
+        self._save_users(users)
+        return True, "Usuario atualizado com sucesso."
 
     def load(self) -> list[FineRecord]:
         if self.uses_database:

@@ -34,14 +34,16 @@ Endereco padrao:
 http://127.0.0.1:8080/login
 ```
 
-## Credenciais do dashboard
+## Administrador inicial
 
-Defina no `.env` ou no ambiente:
+Defina no `.env` ou no ambiente o primeiro administrador do sistema:
 
 ```powershell
 $env:DASHBOARD_USER = "admin"
 $env:DASHBOARD_PASSWORD = "admin123"
 ```
+
+Depois que esse admin entrar no painel, ele pode cadastrar outros usuarios pela secao `Usuarios`.
 
 ## Deploy no Railway
 
@@ -138,7 +140,7 @@ Nesse modo, o job e processado normalmente, mas com multas de exemplo.
 
 ## Fluxo do sistema
 
-1. O usuario entra no dashboard com login e senha do sistema.
+1. O usuario entra no dashboard com um login cadastrado no sistema.
 2. No painel, clica em "Solicitar leitura agora".
 3. O sistema registra um job no PostgreSQL.
 4. O agente local consulta a fila e executa a leitura real.
@@ -150,3 +152,4 @@ Nesse modo, o job e processado normalmente, mas com multas de exemplo.
 - Na sincronizacao real, o navegador da ANTT abre em modo visivel na maquina do agente para permitir CAPTCHA e login quando necessario.
 - O app web continua funcionando mesmo sem o agente conectado; nesse caso ele apenas deixa jobs pendentes.
 - O CSV exportado pelo sistema reflete os dados persistidos no armazenamento atual.
+- O primeiro admin e semeado a partir de `DASHBOARD_USER` e `DASHBOARD_PASSWORD`; depois disso, novos acessos podem ser gerenciados pelo proprio painel.

@@ -7,7 +7,7 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -40,7 +40,7 @@ def _create_session(username: str) -> str:
     return token
 
 
-def _current_user(handler: SimpleHTTPRequestHandler) -> str | None:
+def _session_username(handler: SimpleHTTPRequestHandler) -> str | None:
     raw_cookie = handler.headers.get("Cookie")
     if not raw_cookie:
         return None
@@ -53,6 +53,19 @@ def _current_user(handler: SimpleHTTPRequestHandler) -> str | None:
 
     with _sessions_lock:
         return _sessions.get(token.value)
+
+
+def _current_user(handler: SimpleHTTPRequestHandler) -> dict[str, object] | None:
+    username = _session_username(handler)
+    if not username:
+        return None
+    user = _store.get_user(username)
+    if not isinstance(user, dict):
+        return None
+    if not user.get("is_active", False):
+        return None
+    user["roleLabel"] = "Administrador" if user.get("role") == "admin" else "Operador"
+    return user
 
 
 def _clear_session(handler: SimpleHTTPRequestHandler) -> None:
@@ -112,6 +125,16 @@ def _redirect(handler: SimpleHTTPRequestHandler, location: str, cookie_header: s
     handler.end_headers()
 
 
+def _dashboard_location(message: str = "", tone: str = "info", anchor: str = "") -> str:
+    query = urlencode({"admin_message": message, "admin_tone": tone}) if message else ""
+    location = "/dashboard"
+    if query:
+        location += f"?{query}"
+    if anchor:
+        location += f"#{anchor}"
+    return location
+
+
 def _agent_request_authorized(handler: SimpleHTTPRequestHandler) -> bool:
     if not CONFIG.sync_agent_token:
         return False
@@ -156,18 +179,25 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         if route == "/dashboard":
-            username = _current_user(self)
-            if not username:
+            user = _current_user(self)
+            if not user:
                 _redirect(self, "/login")
                 return
 
+            params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+            is_admin = user.get("role") == "admin"
             payload = _store.build_dashboard_payload()
             _send_html(
                 self,
                 _render(
                     "dashboard.html",
                     page_title="Dashboard | Frutamina Multas",
-                    username=username,
+                    username=user.get("display_name") or user.get("username") or "",
+                    current_user=user,
+                    is_admin=is_admin,
+                    users=_store.list_users() if is_admin else [],
+                    admin_message=(params.get("admin_message") or [""])[0],
+                    admin_tone=(params.get("admin_tone") or ["info"])[0],
                     initial_payload_json=json.dumps(payload, ensure_ascii=False),
                     sync_snapshot_json=json.dumps(_store.get_sync_snapshot(), ensure_ascii=False),
                     mock_mode=CONFIG.mock_sync,
@@ -264,8 +294,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             form = _read_form(self)
             username = (form.get("username") or "").strip()
             password = form.get("password") or ""
-            if username == CONFIG.dashboard_user and password == CONFIG.dashboard_password:
-                token = _create_session(username)
+            user = _store.authenticate_user(username, password)
+            if user:
+                token = _create_session(str(user.get("username") or username))
                 _redirect(
                     self,
                     "/dashboard",
@@ -284,14 +315,56 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return
 
+        if route == "/admin/users/create":
+            user = _current_user(self)
+            if not user:
+                _redirect(self, "/login")
+                return
+            if user.get("role") != "admin":
+                _redirect(self, _dashboard_location("Somente administradores podem gerenciar usuarios.", "error", "usuarios"))
+                return
+
+            form = _read_form(self)
+            ok, message = _store.create_user(
+                username=form.get("new_username", ""),
+                password=form.get("new_password", ""),
+                role=form.get("new_role", "operador"),
+                display_name=form.get("new_display_name", ""),
+                actor=str(user.get("username") or ""),
+            )
+            _redirect(self, _dashboard_location(message, "info" if ok else "error", "usuarios"))
+            return
+
+        if route == "/admin/users/update":
+            user = _current_user(self)
+            if not user:
+                _redirect(self, "/login")
+                return
+            if user.get("role") != "admin":
+                _redirect(self, _dashboard_location("Somente administradores podem gerenciar usuarios.", "error", "usuarios"))
+                return
+
+            form = _read_form(self)
+            ok, message = _store.update_user(
+                username=form.get("username", ""),
+                display_name=form.get("display_name", ""),
+                role=form.get("role", "operador"),
+                is_active=form.get("is_active") == "1",
+                new_password=form.get("new_password", ""),
+                actor=str(user.get("username") or ""),
+                acting_username=str(user.get("username") or ""),
+            )
+            _redirect(self, _dashboard_location(message, "info" if ok else "error", "usuarios"))
+            return
+
         if route == "/api/sync-start":
-            username = _current_user(self)
-            if not username:
+            user = _current_user(self)
+            if not user:
                 _send_json(self, {"error": "Nao autenticado."}, HTTPStatus.UNAUTHORIZED)
                 return
 
             if CONFIG.sync_mode == "agent":
-                created, payload = _store.request_sync(username)
+                created, payload = _store.request_sync(str(user.get("username") or ""))
                 if not created:
                     _send_json(self, {"ok": False, "message": payload}, HTTPStatus.CONFLICT)
                     return
@@ -315,8 +388,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         if route == "/api/sync-cancel":
-            username = _current_user(self)
-            if not username:
+            user = _current_user(self)
+            if not user:
                 _send_json(self, {"error": "Nao autenticado."}, HTTPStatus.UNAUTHORIZED)
                 return
 
@@ -328,7 +401,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 )
                 return
 
-            canceled, message = _store.cancel_active_job(username)
+            canceled, message = _store.cancel_active_job(str(user.get("username") or ""))
             if not canceled:
                 _send_json(self, {"ok": False, "message": message}, HTTPStatus.CONFLICT)
                 return
@@ -337,8 +410,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         if route == "/api/fines/review":
-            username = _current_user(self)
-            if not username:
+            user = _current_user(self)
+            if not user:
                 _send_json(self, {"error": "Nao autenticado."}, HTTPStatus.UNAUTHORIZED)
                 return
             payload = _read_json(self)
@@ -346,7 +419,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             processo = str(payload.get("processo") or "")
             action = str(payload.get("action") or "")
             note = str(payload.get("note") or "")
-            ok, message = _store.set_manual_review(auto, processo, action, note, username)
+            ok, message = _store.set_manual_review(auto, processo, action, note, str(user.get("username") or ""))
             _send_json(
                 self,
                 {"ok": ok, "message": message},
@@ -428,7 +501,7 @@ def create_server(host: str | None = None, port: int | None = None) -> Threading
 def run() -> None:
     server = create_server()
     print(f"Aplicacao disponivel em http://{CONFIG.app_host}:{server.server_port}/login")
-    print(f"Usuario do dashboard: {CONFIG.dashboard_user}")
+    print(f"Admin inicial configurado: {CONFIG.dashboard_user}")
     print(f"Modo de sincronizacao: {CONFIG.sync_mode}")
     print("Use Ctrl+C para encerrar.")
     try:

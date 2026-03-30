@@ -125,3 +125,45 @@ class SyncSnapshot:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass
+class UserRecord:
+    username: str
+    password_hash: str
+    role: str = "operador"
+    display_name: str = ""
+    is_active: bool = True
+    created_at: str = ""
+    updated_at: str = ""
+    last_login_at: str = ""
+    created_by: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+    def to_public_dict(self) -> dict[str, object]:
+        return {
+            "username": self.username,
+            "display_name": self.display_name or self.username,
+            "role": self.role,
+            "is_active": self.is_active,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "last_login_at": self.last_login_at,
+            "created_by": self.created_by,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "UserRecord":
+        return cls(
+            username=str(payload.get("username", "")).strip().lower(),
+            password_hash=str(payload.get("password_hash", "")),
+            role=str(payload.get("role", "operador") or "operador"),
+            display_name=str(payload.get("display_name", "") or ""),
+            is_active=bool(payload.get("is_active", True)),
+            created_at=str(payload.get("created_at", "") or ""),
+            updated_at=str(payload.get("updated_at", "") or ""),
+            last_login_at=str(payload.get("last_login_at", "") or ""),
+            created_by=str(payload.get("created_by", "") or ""),
+        )
