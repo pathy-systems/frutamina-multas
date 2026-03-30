@@ -554,6 +554,18 @@ th {
   width: 46px;
   height: 46px;
   min-width: 46px;
+  background: rgba(223, 231, 244, 0.6);
+}
+
+.table-export-button.is-open {
+  color: #1748b9;
+  background: rgba(47, 103, 246, 0.12);
+  border-color: rgba(47, 103, 246, 0.22);
+}
+
+.table-export-button:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
 }
 
 .export-menu-shell {

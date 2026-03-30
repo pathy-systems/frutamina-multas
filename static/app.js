@@ -404,6 +404,10 @@
     }
     tableExportMenu.hidden = !isOpen;
     tableExportButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    tableExportButton.classList.toggle("is-open", isOpen);
+    if (!isOpen) {
+      tableExportButton.blur();
+    }
   }
 
   function exportFilteredTableAsPdf() {
@@ -829,6 +833,12 @@
       setExportMenuOpen(tableExportMenu.hidden);
     });
 
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setExportMenuOpen(false);
+      }
+    });
+
     document.addEventListener("click", (event) => {
       if (!tableExportMenu.hidden && !event.target.closest(".export-menu-shell")) {
         setExportMenuOpen(false);
@@ -866,8 +876,12 @@
     const processo = actionButton.dataset.processo || "";
     const key = buildLookupKey(auto, processo);
     const noteField = findReviewNoteField(key);
+    const action = actionButton.dataset.reviewAction || "";
+    if (action === "limpar_override" && noteField) {
+      noteField.value = "";
+    }
     const note = noteField ? noteField.value : "";
-    await submitManualReview(auto, processo, actionButton.dataset.reviewAction || "", note);
+    await submitManualReview(auto, processo, action, note);
     await openHistory(auto, processo);
   });
 
@@ -900,10 +914,14 @@
     }
 
     const noteField = byId("historyNoteInput");
+    const action = actionButton.dataset.historyAction || "";
+    if (action === "limpar_override" && noteField) {
+      noteField.value = "";
+    }
     await submitManualReview(
       actionButton.dataset.auto || "",
       actionButton.dataset.processo || "",
-      actionButton.dataset.historyAction || "",
+      action,
       noteField ? noteField.value : ""
     );
     await openHistory(actionButton.dataset.auto || "", actionButton.dataset.processo || "");
