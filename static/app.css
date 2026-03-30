@@ -443,6 +443,7 @@ th {
 .cell-muted {
   color: var(--muted);
   font-size: 0.9rem;
+  text-align: center;
 }
 
 .badge,
