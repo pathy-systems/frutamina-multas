@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div>
+        <div class="brand-mark">
+          <span class="brand-green">FRUTA</span><span class="brand-blue">MINA</span>
+        </div>
+        <p class="hero-kicker">Administracao | acessos do sistema</p>
+        <h1>Gestao de usuarios</h1>
+        <p class="hero-copy">
+          Crie novos logins, ajuste perfis e controle quem pode acessar ou administrar o painel de multas.
+        </p>
+      </div>
+      <div class="hero-user">
+        <span>Administrador logado</span>
+        <strong>{{ username }}</strong>
+        <small>{{ current_user.roleLabel }}</small>
+      </div>
+    </header>
+
+    <nav class="top-nav">
+      <a class="pill" href="/dashboard">Dashboard</a>
+      <a class="pill pill-active" href="/admin/users">Usuarios</a>
+      <a class="pill" href="/logout">Sair</a>
+    </nav>
+
+    {% if mock_mode %}
+    <section class="alert alert-info">
+      Modo de exemplo ativo. Defina <code>MOCK_SYNC=0</code> e configure as credenciais ANTT para usar a leitura real.
+    </section>
+    {% endif %}
+
+    {% if sync_mode == "agent" %}
+    <section class="alert alert-info">
+      O painel continua operando com agente local para leitura da ANTT. Esta area e exclusiva para administradores.
+    </section>
+    {% endif %}
+
+    {% if admin_message %}
+    <section class="alert {% if admin_tone == 'error' %}alert-error{% else %}alert-info{% endif %}">
+      {{ admin_message }}
+    </section>
+    {% endif %}
+
+    <section class="double-grid users-grid">
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h2>Novo usuario</h2>
+            <p class="helper-text">Crie acessos separados para cada pessoa do time e escolha se ela pode ou nao administrar o sistema.</p>
+          </div>
+        </div>
+        <form class="user-form" method="post" action="/admin/users/create">
+          <label class="field">
+            <span>Nome de exibicao</span>
+            <input name="new_display_name" type="text" placeholder="Ex.: Pedro ou Financeiro">
+          </label>
+          <label class="field">
+            <span>Usuario</span>
+            <input name="new_username" type="text" placeholder="ex.: pedro" required>
+          </label>
+          <label class="field">
+            <span>Senha inicial</span>
+            <input name="new_password" type="password" placeholder="Minimo de 6 caracteres" required>
+          </label>
+          <label class="field">
+            <span>Perfil</span>
+            <select name="new_role">
+              <option value="operador">Operador</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </label>
+          <button class="button button-primary" type="submit">Criar usuario</button>
+        </form>
+      </article>
+
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h2>Usuarios cadastrados</h2>
+            <p class="helper-text">Atualize nome, perfil, senha e status. O ultimo administrador ativo fica protegido automaticamente.</p>
+          </div>
+        </div>
+        <div class="users-list">
+          {% for user in users %}
+          <form class="user-card" method="post" action="/admin/users/update">
+            <input type="hidden" name="username" value="{{ user.username }}">
+            <div class="user-card-head">
+              <div>
+                <strong>{{ user.display_name or user.username }}</strong>
+                <p>@{{ user.username }}</p>
+              </div>
+              <div class="user-badges">
+                <span class="user-badge {% if user.is_active %}user-badge-active{% else %}user-badge-inactive{% endif %}">
+                  {% if user.is_active %}Ativo{% else %}Inativo{% endif %}
+                </span>
+                <span class="user-badge user-badge-role">{{ user.roleLabel }}</span>
+                {% if user.username == current_user.username %}
+                <span class="user-badge user-badge-current">Voce</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="user-card-grid">
+              <label class="field">
+                <span>Nome de exibicao</span>
+                <input name="display_name" type="text" value="{{ user.display_name or user.username }}">
+              </label>
+              <label class="field">
+                <span>Perfil</span>
+                <select name="role">
+                  <option value="operador" {% if user.role == "operador" %}selected{% endif %}>Operador</option>
+                  <option value="admin" {% if user.role == "admin" %}selected{% endif %}>Administrador</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Nova senha</span>
+                <input name="new_password" type="password" placeholder="Deixe em branco para manter">
+              </label>
+              <label class="checkbox-field">
+                <input type="checkbox" name="is_active" value="1" {% if user.is_active %}checked{% endif %}>
+                <span>Usuario ativo</span>
+              </label>
+            </div>
+            <div class="user-meta">
+              <span>Criado em {{ user.created_at or "Sem data" }}</span>
+              <span>Ultimo acesso: {{ user.last_login_at or "Nunca" }}</span>
+            </div>
+            <div class="user-actions">
+              <button class="button button-secondary" type="submit">Salvar alteracoes</button>
+            </div>
+          </form>
+          {% else %}
+          <div class="empty-state">Nenhum usuario cadastrado ainda.</div>
+          {% endfor %}
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

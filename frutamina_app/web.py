@@ -135,6 +135,14 @@ def _dashboard_location(message: str = "", tone: str = "info", anchor: str = "")
     return location
 
 
+def _users_location(message: str = "", tone: str = "info") -> str:
+    query = urlencode({"admin_message": message, "admin_tone": tone}) if message else ""
+    location = "/admin/users"
+    if query:
+        location += f"?{query}"
+    return location
+
+
 def _agent_request_authorized(handler: SimpleHTTPRequestHandler) -> bool:
     if not CONFIG.sync_agent_token:
         return False
@@ -184,8 +192,6 @@ class AppHandler(SimpleHTTPRequestHandler):
                 _redirect(self, "/login")
                 return
 
-            params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
-            is_admin = user.get("role") == "admin"
             payload = _store.build_dashboard_payload()
             _send_html(
                 self,
@@ -194,16 +200,40 @@ class AppHandler(SimpleHTTPRequestHandler):
                     page_title="Dashboard | Frutamina Multas",
                     username=user.get("display_name") or user.get("username") or "",
                     current_user=user,
-                    is_admin=is_admin,
-                    users=_store.list_users() if is_admin else [],
-                    admin_message=(params.get("admin_message") or [""])[0],
-                    admin_tone=(params.get("admin_tone") or ["info"])[0],
+                    is_admin=user.get("role") == "admin",
                     initial_payload_json=json.dumps(payload, ensure_ascii=False),
                     sync_snapshot_json=json.dumps(_store.get_sync_snapshot(), ensure_ascii=False),
                     mock_mode=CONFIG.mock_sync,
                     sync_mode=CONFIG.sync_mode,
                     database_enabled=_store.uses_database,
                     recent_jobs=_store.list_recent_jobs(),
+                ),
+            )
+            return
+
+        if route == "/admin/users":
+            user = _current_user(self)
+            if not user:
+                _redirect(self, "/login")
+                return
+            if user.get("role") != "admin":
+                _redirect(self, _dashboard_location("Somente administradores podem acessar a gestao de usuarios.", "error"))
+                return
+
+            params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+            _send_html(
+                self,
+                _render(
+                    "users.html",
+                    page_title="Usuarios | Frutamina Multas",
+                    username=user.get("display_name") or user.get("username") or "",
+                    current_user=user,
+                    is_admin=True,
+                    users=_store.list_users(),
+                    admin_message=(params.get("admin_message") or [""])[0],
+                    admin_tone=(params.get("admin_tone") or ["info"])[0],
+                    mock_mode=CONFIG.mock_sync,
+                    sync_mode=CONFIG.sync_mode,
                 ),
             )
             return
@@ -321,7 +351,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 _redirect(self, "/login")
                 return
             if user.get("role") != "admin":
-                _redirect(self, _dashboard_location("Somente administradores podem gerenciar usuarios.", "error", "usuarios"))
+                _redirect(self, _dashboard_location("Somente administradores podem gerenciar usuarios.", "error"))
                 return
 
             form = _read_form(self)
@@ -332,7 +362,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 display_name=form.get("new_display_name", ""),
                 actor=str(user.get("username") or ""),
             )
-            _redirect(self, _dashboard_location(message, "info" if ok else "error", "usuarios"))
+            _redirect(self, _users_location(message, "info" if ok else "error"))
             return
 
         if route == "/admin/users/update":
@@ -341,7 +371,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 _redirect(self, "/login")
                 return
             if user.get("role") != "admin":
-                _redirect(self, _dashboard_location("Somente administradores podem gerenciar usuarios.", "error", "usuarios"))
+                _redirect(self, _dashboard_location("Somente administradores podem gerenciar usuarios.", "error"))
                 return
 
             form = _read_form(self)
@@ -354,7 +384,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 actor=str(user.get("username") or ""),
                 acting_username=str(user.get("username") or ""),
             )
-            _redirect(self, _dashboard_location(message, "info" if ok else "error", "usuarios"))
+            _redirect(self, _users_location(message, "info" if ok else "error"))
             return
 
         if route == "/api/sync-start":
