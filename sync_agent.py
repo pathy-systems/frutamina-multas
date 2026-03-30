@@ -41,6 +41,18 @@ def _claim_next_job() -> dict[str, Any] | None:
     return response.get("job")
 
 
+def _send_heartbeat(status: str, message: str = "", current_job_id: str = "") -> None:
+    _post_json(
+        f"{CONFIG.agent_server_url}/api/agent/heartbeat",
+        {
+            "agent_name": CONFIG.sync_agent_name,
+            "status": status,
+            "message": message,
+            "current_job_id": current_job_id,
+        },
+    )
+
+
 def _send_progress(job_id: str, message: str) -> None:
     _post_json(
         f"{CONFIG.agent_server_url}/api/agent/jobs/{job_id}/progress",
@@ -107,15 +119,25 @@ def _validate_agent_config() -> None:
 def process_single_job() -> bool:
     job = _claim_next_job()
     if not job:
+        try:
+            _send_heartbeat("idle", "Nenhum job pendente.")
+        except Exception as exc:
+            print(f"Aviso no heartbeat: {exc}")
         print("Nenhum job pendente.")
         return False
 
     job_id = str(job["id"])
     print(f"Job recebido: {job_id}")
     last_progress_at = 0.0
+    last_heartbeat_at = 0.0
+
+    try:
+        _send_heartbeat("running", f"Processando job {job_id}.", job_id)
+    except Exception as exc:
+        print(f"Aviso no heartbeat: {exc}")
 
     def progress(message: str) -> None:
-        nonlocal last_progress_at
+        nonlocal last_progress_at, last_heartbeat_at
         now = time.time()
         print(message)
         if now - last_progress_at >= 1.0:
@@ -124,6 +146,12 @@ def process_single_job() -> bool:
                 _send_progress(job_id, message)
             except Exception as exc:
                 print(f"Aviso ao enviar progresso: {exc}")
+        if now - last_heartbeat_at >= 5.0:
+            last_heartbeat_at = now
+            try:
+                _send_heartbeat("running", message, job_id)
+            except Exception as exc:
+                print(f"Aviso no heartbeat: {exc}")
 
     try:
         fines = run_sync(progress)
@@ -134,6 +162,10 @@ def process_single_job() -> bool:
             _collect_pdf_documents(fines_payload),
             f"Leitura concluida pelo agente {CONFIG.sync_agent_name}.",
         )
+        try:
+            _send_heartbeat("idle", f"Ultima leitura concluida com {len(fines)} multa(s).")
+        except Exception as exc:
+            print(f"Aviso no heartbeat: {exc}")
         print(f"Job finalizado com sucesso. Total de multas: {len(fines)}")
         return True
     except Exception as exc:
@@ -143,11 +175,19 @@ def process_single_job() -> bool:
             _send_fail(job_id, message)
         except Exception as submit_exc:
             print(f"Nao foi possivel notificar falha ao servidor: {submit_exc}")
+        try:
+            _send_heartbeat("error", message, job_id)
+        except Exception as heartbeat_exc:
+            print(f"Nao foi possivel atualizar heartbeat: {heartbeat_exc}")
         return True
 
 
 def run_loop(poll_interval: int) -> None:
     print(f"Agente ativo. Consultando jobs em {CONFIG.agent_server_url} a cada {poll_interval}s.")
+    try:
+        _send_heartbeat("idle", "Agente iniciado e aguardando jobs.")
+    except Exception as exc:
+        print(f"Aviso no heartbeat: {exc}")
     while True:
         try:
             handled = process_single_job()

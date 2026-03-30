@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
@@ -22,6 +22,10 @@ class FineRecord:
     fonte_valor: str = ""
     status_carteira: str = "ativa_sem_boleto"
     ja_teve_boleto: bool = False
+    first_seen_at: str = ""
+    decision_trail: list[str] = field(default_factory=list)
+    manual_override_status: str = ""
+    manual_override_note: str = ""
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -73,6 +77,10 @@ class FineRecord:
             fonte_valor=str(payload.get("fonte_valor", "")),
             status_carteira=status_carteira,
             ja_teve_boleto=ja_teve_boleto,
+            first_seen_at=str(payload.get("first_seen_at", "") or ""),
+            decision_trail=[str(item) for item in payload.get("decision_trail", [])],
+            manual_override_status=str(payload.get("manual_override_status", "") or ""),
+            manual_override_note=str(payload.get("manual_override_note", "") or ""),
         )
 
 

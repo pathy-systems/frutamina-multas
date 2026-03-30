@@ -192,7 +192,19 @@ class AppHandler(SimpleHTTPRequestHandler):
             snapshot = _store.get_sync_snapshot()
             snapshot["mode"] = CONFIG.sync_mode
             snapshot["jobs"] = _store.list_recent_jobs(5)
+            snapshot["agent_status"] = _store.get_agent_status()
             _send_json(self, snapshot)
+            return
+
+        if route == "/api/fine-history":
+            if not _current_user(self):
+                _send_json(self, {"error": "Nao autenticado."}, HTTPStatus.UNAUTHORIZED)
+                return
+            params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+            auto = (params.get("auto") or [""])[0]
+            processo = (params.get("processo") or [""])[0]
+            history = _store.get_fine_history(auto, processo)
+            _send_json(self, {"history": history, "auto": auto, "processo": processo})
             return
 
         if route == "/api/agent/jobs/next":
@@ -322,6 +334,37 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
 
             _send_json(self, {"ok": True, "message": message}, HTTPStatus.OK)
+            return
+
+        if route == "/api/fines/review":
+            username = _current_user(self)
+            if not username:
+                _send_json(self, {"error": "Nao autenticado."}, HTTPStatus.UNAUTHORIZED)
+                return
+            payload = _read_json(self)
+            auto = str(payload.get("auto") or "")
+            processo = str(payload.get("processo") or "")
+            action = str(payload.get("action") or "")
+            note = str(payload.get("note") or "")
+            ok, message = _store.set_manual_review(auto, processo, action, note, username)
+            _send_json(
+                self,
+                {"ok": ok, "message": message},
+                HTTPStatus.OK if ok else HTTPStatus.BAD_REQUEST,
+            )
+            return
+
+        if route == "/api/agent/heartbeat":
+            if not _agent_request_authorized(self):
+                _send_json(self, {"error": "Agente nao autorizado."}, HTTPStatus.UNAUTHORIZED)
+                return
+            payload = _read_json(self)
+            agent_name = str(payload.get("agent_name") or CONFIG.sync_agent_name)
+            status = str(payload.get("status") or "idle")
+            message = str(payload.get("message") or "")
+            current_job_id = str(payload.get("current_job_id") or "")
+            _store.update_agent_status(agent_name, status, message, current_job_id)
+            _send_json(self, {"ok": True})
             return
 
         if route == "/api/agent/jobs/next":

@@ -47,7 +47,7 @@ class SyncManager:
 
         try:
             fines = run_sync(update)
-            self._store.save(fines)
+            self._store.save(fines, actor="sync_embutida")
             with self._lock:
                 timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 snapshot = self._store.get_sync_snapshot()

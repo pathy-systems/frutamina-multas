@@ -47,6 +47,31 @@ SELECTOR_BOTAO_OK_PESQUISA = "#MessageBoxPesquisa_ButtonOkPesquisa"
 SELECTOR_REPRESENTADO_BOLETO = "#ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ddlRepresentado"
 SELECTOR_TIPO_MULTA_BOLETO = "#ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ddlTipoMulta"
 SELECTOR_BOTAO_PESQUISAR_BOLETO = "#ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_ContentPlaceHolderCorpo_btnPesquisar"
+PDF_MODAL_SELECTORS = (
+    "#MessageBoxPesquisa",
+    "#MessageBox",
+    "div[id*='MessageBox']",
+    ".ui-dialog",
+    ".modal",
+    ".swal2-popup",
+)
+PDF_MODAL_BUTTON_SELECTORS = (
+    "#MessageBoxPesquisa_ButtonOkPesquisa",
+    "#MessageBoxPesquisa_ButtonOk",
+    "#MessageBox_ButtonOK",
+    "input[value='OK']",
+    "button:has-text('OK')",
+    "button:has-text('Fechar')",
+    "a:has-text('Fechar')",
+)
+PDF_ERROR_PATTERNS = (
+    "FALHADECOMUNICACAO",
+    "ERRODECOMUNICACAO",
+    "FALHANACOMUNICACAO",
+    "FALHACOMUNICACAO",
+)
+PDF_DOWNLOAD_TIMEOUT_MS = 45000
+PDF_DOWNLOAD_RETRIES = 3
 
 OPCOES_FISCALIZACAO = {
     "Excesso de Peso": "2",
@@ -132,6 +157,10 @@ async def _run_sync(callback: StatusCallback | None = None) -> list[FineRecord]:
 async def _wait_modal_cycle(page: "Page") -> None:
     try:
         await page.wait_for_selector(SELECTOR_MODAL_PROCESSANDO, state="visible", timeout=10000)
+    except Exception:
+        pass
+    try:
+        await page.wait_for_selector(SELECTOR_MODAL_PROCESSANDO, state="hidden", timeout=120000)
     except Exception:
         pass
 
@@ -248,10 +277,69 @@ async def _extract_boleto_matches_from_page(page: "Page", fines: list[FineRecord
                 matched_indexes.add(index)
 
     return matched_indexes
+
+
+async def _cancel_download_task(download_task: "asyncio.Task[object] | None") -> None:
+    if not download_task or download_task.done():
+        return
+    download_task.cancel()
     try:
-        await page.wait_for_selector(SELECTOR_MODAL_PROCESSANDO, state="hidden", timeout=120000)
+        await download_task
+    except BaseException:
+        pass
+
+
+async def _visible_pdf_error_message(page: "Page") -> str:
+    for selector in PDF_MODAL_SELECTORS:
+        locator = page.locator(selector).first
+        try:
+            if not await locator.is_visible():
+                continue
+            text = " ".join((((await locator.text_content()) or "").split()))
+            normalized = _normalize_pdf_text(text)
+            if any(pattern in normalized for pattern in PDF_ERROR_PATTERNS):
+                return text or "Falha de comunicacao"
+        except Exception:
+            continue
+
+    return ""
+
+
+async def _dismiss_pdf_error_modal(page: "Page") -> None:
+    for selector in PDF_MODAL_BUTTON_SELECTORS:
+        locator = page.locator(selector).first
+        try:
+            if await locator.is_visible():
+                await locator.click(timeout=1000)
+                await page.wait_for_timeout(250)
+                return
+        except Exception:
+            continue
+
+    try:
+        await page.keyboard.press("Escape")
     except Exception:
         pass
+
+
+async def _prepare_pdf_download(page: "Page") -> str:
+    for _ in range(20):
+        try:
+            if await page.locator(SELECTOR_RADIO_NAO).is_visible():
+                await page.click(SELECTOR_RADIO_NAO)
+                await page.wait_for_timeout(250)
+                await page.click(SELECTOR_BOTAO_OK_PESQUISA)
+                return ""
+        except Exception:
+            pass
+
+        error_message = await _visible_pdf_error_message(page)
+        if error_message:
+            return error_message
+
+        await page.wait_for_timeout(250)
+
+    return ""
 
 
 async def _extract_table_data(page: "Page", tipo: str, callback: StatusCallback | None) -> list[FineRecord]:
@@ -329,29 +417,68 @@ async def _download_pdf_and_extract_value(
     if pdf_path.exists():
         return _extract_pdf_value(pdf_path)
 
-    row_locator = page.locator(f"{SELECTOR_TABELA_RESULTADO} tbody tr:has-text(\"{auto_infracao}\")").first
-    button = row_locator.locator('[id^="Corpo_gdvResultado_btnVisualizar"], [id*="btnVisualizar"], a:has-text("Visualizar")').first
+    last_error_message = ""
 
-    try:
-        async with page.expect_download(timeout=120000) as download_info:
-            await button.click()
-            await page.wait_for_selector(SELECTOR_RADIO_NAO, state="visible", timeout=10000)
-            await page.click(SELECTOR_RADIO_NAO)
-            await page.wait_for_timeout(400)
-            await page.click(SELECTOR_BOTAO_OK_PESQUISA)
-            download = await download_info.value
-            await download.save_as(str(pdf_path))
-    except Exception:
-        if callback:
-            callback(f"Nao foi possivel baixar o PDF de {auto_infracao}.")
-        return BoletoExtractionResult(
-            valor=Decimal("0"),
-            boleto_disponivel=False,
-            valor_disponivel=False,
-            mensagem="Boleto e valor ainda nao estao disponiveis",
-        )
+    for attempt in range(1, PDF_DOWNLOAD_RETRIES + 1):
+        row_locator = page.locator(f"{SELECTOR_TABELA_RESULTADO} tbody tr:has-text(\"{auto_infracao}\")").first
+        button = row_locator.locator(
+            '[id^="Corpo_gdvResultado_btnVisualizar"], [id*="btnVisualizar"], a:has-text("Visualizar")'
+        ).first
+        download_task: asyncio.Task[object] | None = None
 
-    return _extract_pdf_value(pdf_path)
+        try:
+            download_task = asyncio.create_task(page.wait_for_event("download", timeout=PDF_DOWNLOAD_TIMEOUT_MS))
+            await button.click(timeout=10000)
+            immediate_error = await _prepare_pdf_download(page)
+            if immediate_error:
+                last_error_message = immediate_error
+                await _dismiss_pdf_error_modal(page)
+                raise RuntimeError(immediate_error)
+
+            deadline = asyncio.get_running_loop().time() + (PDF_DOWNLOAD_TIMEOUT_MS / 1000)
+            while True:
+                if download_task.done():
+                    download = await download_task
+                    await download.save_as(str(pdf_path))
+                    return _extract_pdf_value(pdf_path)
+
+                modal_error = await _visible_pdf_error_message(page)
+                if modal_error:
+                    last_error_message = modal_error
+                    await _dismiss_pdf_error_modal(page)
+                    raise RuntimeError(modal_error)
+
+                if asyncio.get_running_loop().time() >= deadline:
+                    last_error_message = "Tempo limite esgotado ao gerar o PDF."
+                    raise TimeoutError(last_error_message)
+
+                await page.wait_for_timeout(400)
+        except Exception:
+            await _cancel_download_task(download_task)
+            if attempt < PDF_DOWNLOAD_RETRIES:
+                if callback:
+                    callback(
+                        f"Falha ao gerar o PDF de {auto_infracao} (tentativa {attempt}/{PDF_DOWNLOAD_RETRIES}). Tentando novamente."
+                    )
+                await page.wait_for_timeout(1000 * attempt)
+                continue
+        finally:
+            await _cancel_download_task(download_task)
+
+        break
+
+    if callback:
+        callback(f"Nao foi possivel baixar o PDF de {auto_infracao}.")
+    mensagem = "Boleto e valor ainda nao estao disponiveis"
+    normalized_error = _normalize_pdf_text(last_error_message)
+    if any(pattern in normalized_error for pattern in PDF_ERROR_PATTERNS):
+        mensagem = "Portal ANTT falhou ao gerar o PDF nesta leitura"
+    return BoletoExtractionResult(
+        valor=Decimal("0"),
+        boleto_disponivel=False,
+        valor_disponivel=False,
+        mensagem=mensagem,
+    )
 
 
 def _extract_pdf_value(pdf_path: Path) -> BoletoExtractionResult:

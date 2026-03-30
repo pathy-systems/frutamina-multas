@@ -16,7 +16,7 @@
         <p class="hero-kicker">Dashboard | multas ANTT</p>
         <h1>Controle central de multas</h1>
         <p class="hero-copy">
-          Consulte todas as multas ativas, acompanhe o valor total e acione a sincronizacao com o portal ANTT pelo proprio painel.
+          Consulte todas as multas ativas, acompanhe a trilha de decisao e acione a sincronizacao com o portal ANTT pelo proprio painel.
         </p>
       </div>
       <div class="hero-user">
@@ -28,6 +28,8 @@
     <nav class="top-nav">
       <a class="pill pill-active" href="#dashboard">Dashboard</a>
       <a class="pill" href="#multas">Multas</a>
+      <a class="pill" href="#revisao">Revisao</a>
+      <a class="pill" href="#historico">Historico</a>
       <a class="pill" href="#resumo">Resumo</a>
       <a class="pill" href="/logout">Sair</a>
     </nav>
@@ -50,7 +52,7 @@
         <h2>{% if sync_mode == "agent" %}Solicitar leitura da ANTT{% else %}Atualizar multas pelo portal{% endif %}</h2>
         <p class="helper-text">
           {% if sync_mode == "agent" %}
-          O site registra o pedido e o agente local processa a leitura com Playwright.
+          O site registra o pedido e o agente local processa a leitura com Playwright, heartbeat e fila de revisao.
           {% else %}
           Ao iniciar a sincronizacao, a automacao abre o portal ANTT e atualiza os dados do dashboard.
           {% endif %}
@@ -74,14 +76,26 @@
       </div>
     </section>
 
-    <section class="card jobs-card">
-      <div class="section-header">
-        <div>
-          <h2>Fila de sincronizacao</h2>
-          <p class="helper-text">Ultimas solicitacoes feitas pelo dashboard e processadas pelo agente.</p>
+    <section class="double-grid operational-grid">
+      <article class="card agent-card">
+        <div class="section-header">
+          <div>
+            <h2>Saude do agente</h2>
+            <p class="helper-text">Heartbeat do computador que abre a ANTT e executa a leitura.</p>
+          </div>
         </div>
-      </div>
-      <div id="jobsList" class="stack-list"></div>
+        <div id="agentStatusCard" class="agent-status-panel"></div>
+      </article>
+
+      <article class="card jobs-card">
+        <div class="section-header">
+          <div>
+            <h2>Fila de sincronizacao</h2>
+            <p class="helper-text">Ultimas solicitacoes feitas pelo dashboard e processadas pelo agente.</p>
+          </div>
+        </div>
+        <div id="jobsList" class="stack-list"></div>
+      </article>
     </section>
 
     <section class="stats-grid">
@@ -99,18 +113,28 @@
         <strong id="activeTypesValue">0</strong>
       </article>
       <article class="card stat-card">
+        <span>Novas em destaque</span>
+        <strong id="newFinesValue">0</strong>
+        <small id="newFinesHint" class="stat-hint">Nenhuma multa nova destacada</small>
+      </article>
+      <article class="card stat-card">
         <span>Ultima atualizacao</span>
         <strong id="updatedAtValue">Sem sincronizacao</strong>
       </article>
+    </section>
+
+    <section id="newFinesBanner" class="alert alert-highlight banner-hidden">
+      <strong id="newFinesBannerTitle">Novas multas identificadas</strong>
+      <p id="newFinesBannerText">A sincronizacao encontrou novas multas na carteira.</p>
     </section>
 
     <section class="card table-card" id="multas">
       <div class="section-header">
         <div>
           <h2>Multas ativas</h2>
-          <p class="helper-text">Busque por auto, processo, autuado ou situacao.</p>
+          <p class="helper-text">Busque por auto, processo, autuado ou situacao e filtre pelo status interno da carteira.</p>
         </div>
-        <div class="toolbar">
+        <div class="toolbar toolbar-wide">
           <label class="field">
             <span>Pesquisar</span>
             <input id="searchInput" type="search" placeholder="Digite para filtrar">
@@ -118,6 +142,12 @@
           <label class="field">
             <span>Tipo</span>
             <select id="typeFilter">
+              <option value="">Todos</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Status interno</span>
+            <select id="portfolioStatusFilter">
               <option value="">Todos</option>
             </select>
           </label>
@@ -140,11 +170,36 @@
               <th>Data</th>
               <th>Valor do boleto</th>
               <th>PDF</th>
+              <th>Analise</th>
             </tr>
           </thead>
           <tbody id="finesTableBody"></tbody>
         </table>
       </div>
+    </section>
+
+    <section class="double-grid review-grid" id="revisao">
+      <article class="card">
+        <div class="section-header">
+          <div>
+            <h2>Fila de revisao</h2>
+            <p class="helper-text">Casos com divergencia de historico ou marcados manualmente como quitados.</p>
+          </div>
+        </div>
+        <div id="reviewList" class="stack-list"></div>
+      </article>
+
+      <article class="card" id="historico">
+        <div class="section-header">
+          <div>
+            <h2>Historico e acao manual</h2>
+            <p class="helper-text">Abra uma multa para ver a trilha de decisao e registrar um override manual.</p>
+          </div>
+        </div>
+        <div id="historyPanel" class="history-panel empty-state">
+          Selecione uma multa na tabela ou na fila de revisao para abrir o historico.
+        </div>
+      </article>
     </section>
 
     <section class="double-grid" id="resumo">
@@ -174,5 +229,6 @@
   <script id="initialSyncSnapshot" type="application/json">{{ sync_snapshot_json | safe }}</script>
   <script id="appMeta" type="application/json">{{ {"syncMode": sync_mode, "databaseEnabled": database_enabled, "recentJobs": recent_jobs} | tojson | safe }}</script>
   <script src="/static/app.js" defer></script>
+  <div id="newFinesToast" class="toast-banner" hidden></div>
 </body>
 </html>

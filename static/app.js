@@ -26,6 +26,26 @@
       .replaceAll("'", "&#39;");
   }
 
+  function trailMarkup(decisionTrail) {
+    if (!decisionTrail || !decisionTrail.length) {
+      return '<div class="empty-state compact-empty">Sem trilha registrada ainda.</div>';
+    }
+
+    return `
+      <ul class="decision-list">
+        ${decisionTrail.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+    `;
+  }
+
+  function buildLookupKey(auto, processo) {
+    return `${auto || ""}__${processo || ""}`;
+  }
+
+  function findReviewNoteField(key) {
+    return Array.from(reviewList.querySelectorAll("textarea[data-key]")).find((node) => node.dataset.key === key) || null;
+  }
+
   const dashboardRoot = byId("finesTableBody");
   if (!dashboardRoot) {
     return;
@@ -38,12 +58,24 @@
       available_boleto_count: 0,
       pending_boleto_count: 0,
       review_count: 0,
+      manual_quitada_count: 0,
+      new_count: 0,
       active_types: 0,
       updated_at: "Sem sincronizacao"
     },
+    new_fines: [],
     type_counts: [],
     portfolio_status_counts: [],
     top_fines: [],
+    agent_status: {
+      status: "offline",
+      statusLabel: "Sem sinal",
+      message: "Aguardando heartbeat do agente.",
+      current_job_id: "",
+      last_seen_at: "",
+      agent_name: ""
+    },
+    review_items: [],
     fines: []
   });
   let syncSnapshot = parseJsonScript("initialSyncSnapshot", {
@@ -58,22 +90,88 @@
   const syncMode = appMeta.syncMode || "embedded";
   let recentJobs = appMeta.recentJobs || [];
   let lastSuccessKey = syncSnapshot.last_success_at || "";
+  let currentHistoryTarget = null;
+  let recentNewKeys = new Set((payload.new_fines || []).map((item) => buildLookupKey(item.auto, item.processo)));
+  let hasLoadedOnce = false;
 
   const searchInput = byId("searchInput");
   const typeFilter = byId("typeFilter");
+  const portfolioStatusFilter = byId("portfolioStatusFilter");
   const syncButton = byId("syncButton");
   const cancelSyncButton = byId("cancelSyncButton");
   const statusDot = byId("syncStatusDot");
   const statusTitle = byId("syncStatusTitle");
   const statusMessage = byId("syncStatusMessage");
   const jobsList = byId("jobsList");
+  const reviewList = byId("reviewList");
+  const historyPanel = byId("historyPanel");
+  const agentStatusCard = byId("agentStatusCard");
+  const newFinesBanner = byId("newFinesBanner");
+  const newFinesBannerTitle = byId("newFinesBannerTitle");
+  const newFinesBannerText = byId("newFinesBannerText");
+  const newFinesToast = byId("newFinesToast");
+
+  function findFine(auto, processo) {
+    const key = buildLookupKey(auto, processo);
+    return (
+      payload.fines.find((item) => buildLookupKey(item.auto, item.processo) === key) ||
+      payload.review_items.find((item) => buildLookupKey(item.auto, item.processo) === key) ||
+      null
+    );
+  }
 
   function updateSummary() {
     byId("totalFinesValue").textContent = payload.summary.total_fines;
     byId("totalValueValue").textContent = payload.summary.total_value;
-    byId("totalValueHint").textContent = `${payload.summary.available_boleto_count || 0} boleto(s) com valor encontrado | ${payload.summary.review_count || 0} em revisao`;
+    byId("totalValueHint").textContent =
+      `${payload.summary.available_boleto_count || 0} boleto(s) com valor encontrado | ` +
+      `${payload.summary.review_count || 0} em revisao | ` +
+      `${payload.summary.manual_quitada_count || 0} quitada(s) ocultas`;
     byId("activeTypesValue").textContent = payload.summary.active_types;
+    byId("newFinesValue").textContent = payload.summary.new_count || 0;
+    byId("newFinesHint").textContent = payload.summary.new_count
+      ? `${payload.summary.new_count} multa(s) ainda em janela de destaque`
+      : "Nenhuma multa nova destacada";
     byId("updatedAtValue").textContent = payload.summary.updated_at;
+  }
+
+  function renderNewFinesBanner() {
+    if (!newFinesBanner) {
+      return;
+    }
+
+    const items = payload.new_fines || [];
+    const count = payload.summary.new_count || 0;
+    newFinesBanner.classList.toggle("banner-hidden", count === 0);
+    if (!count) {
+      return;
+    }
+
+    const preview = items.slice(0, 4).map((item) => item.auto).filter(Boolean);
+    newFinesBannerTitle.textContent = `${count} multa(s) nova(s) em destaque`;
+    newFinesBannerText.textContent = preview.length
+      ? `Autos recentes: ${preview.join(", ")}${count > preview.length ? "..." : ""}.`
+      : "A sincronizacao encontrou novas multas na carteira.";
+  }
+
+  function showNewFinesToast(items) {
+    if (!newFinesToast || !items.length) {
+      return;
+    }
+
+    const preview = items.slice(0, 3).map((item) => item.auto).filter(Boolean);
+    newFinesToast.textContent = preview.length
+      ? `Nova(s) multa(s): ${preview.join(", ")}${items.length > preview.length ? "..." : ""}`
+      : "Novas multas identificadas na sincronizacao.";
+    newFinesToast.hidden = false;
+    newFinesToast.classList.add("toast-visible");
+    window.clearTimeout(showNewFinesToast._timer);
+    showNewFinesToast._timer = window.setTimeout(() => {
+      newFinesToast.classList.remove("toast-visible");
+      window.setTimeout(() => {
+        newFinesToast.hidden = true;
+      }, 260);
+    }, 5000);
   }
 
   function updateTypeFilter() {
@@ -88,11 +186,29 @@
     typeFilter.value = currentValue;
   }
 
+  function updatePortfolioStatusFilter() {
+    const currentValue = portfolioStatusFilter.value;
+    portfolioStatusFilter.innerHTML = '<option value="">Todos</option>';
+    payload.portfolio_status_counts.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.status;
+      option.textContent = `${item.label} (${item.count})`;
+      portfolioStatusFilter.appendChild(option);
+    });
+    portfolioStatusFilter.value = currentValue;
+  }
+
   function filteredFines() {
     const term = (searchInput.value || "").trim().toLowerCase();
     const type = typeFilter.value;
+    const portfolioStatus = portfolioStatusFilter.value;
+
     return payload.fines.filter((item) => {
       if (type && item.tipo !== type) {
+        return false;
+      }
+
+      if (portfolioStatus && item.statusCarteira !== portfolioStatus) {
         return false;
       }
 
@@ -100,7 +216,16 @@
         return true;
       }
 
-      const haystack = [item.auto, item.tipo, item.processo, item.autuado, item.situacao, item.dataAuto]
+      const haystack = [
+        item.auto,
+        item.tipo,
+        item.processo,
+        item.autuado,
+        item.situacao,
+        item.dataAuto,
+        item.statusCarteiraLabel,
+        item.mensagemValor
+      ]
         .join(" ")
         .toLowerCase();
       return haystack.includes(term);
@@ -114,7 +239,7 @@
     if (!rows.length) {
       dashboardRoot.innerHTML = `
         <tr>
-          <td colspan="7"><div class="empty-state">Nenhuma multa encontrada para o filtro aplicado.</div></td>
+          <td colspan="8"><div class="empty-state">Nenhuma multa encontrada para o filtro aplicado.</div></td>
         </tr>
       `;
       return;
@@ -124,6 +249,10 @@
       const pdf = item.pdfUrl
         ? `<a class="pdf-link" href="${escapeHtml(item.pdfUrl)}" target="_blank" rel="noreferrer">Abrir PDF</a>`
         : `<span class="pdf-link pdf-link-disabled">Sem PDF</span>`;
+      const newBadge = item.isNew
+        ? `<span class="new-badge">Nova</span>`
+        : "";
+
       const valueCell = item.valorDisponivel
         ? `
           <div class="value-cell">
@@ -141,10 +270,13 @@
         `;
 
       return `
-        <tr>
+        <tr class="${item.isNew ? "table-row-new" : ""}">
           <td>
             <div class="cell-title">
-              <strong>${escapeHtml(item.auto)}</strong>
+              <div class="cell-inline">
+                <strong>${escapeHtml(item.auto)}</strong>
+                ${newBadge}
+              </div>
               <span class="cell-muted">${escapeHtml(item.autuado)}</span>
             </div>
           </td>
@@ -159,6 +291,16 @@
           <td>${escapeHtml(item.dataAuto)}</td>
           <td>${valueCell}</td>
           <td>${pdf}</td>
+          <td>
+            <button
+              class="button button-secondary table-action"
+              type="button"
+              data-action="open-history"
+              data-auto="${escapeHtml(item.auto)}"
+              data-processo="${escapeHtml(item.processo)}">
+              Abrir analise
+            </button>
+          </td>
         </tr>
       `;
     }).join("");
@@ -200,6 +342,40 @@
     `).join("");
   }
 
+  function renderAgentStatus() {
+    if (!agentStatusCard) {
+      return;
+    }
+
+    const status = syncSnapshot.agent_status || payload.agent_status || {};
+    const tone = status.online
+      ? "agent-online"
+      : ((status.status || "").toLowerCase() === "error" ? "agent-error" : "agent-offline");
+    const lastSeen = status.last_seen_at || "Sem heartbeat";
+    const message = status.message || "Aguardando heartbeat do agente.";
+    const jobInfo = status.current_job_id
+      ? `<span>Job atual: ${escapeHtml(status.current_job_id)}</span>`
+      : "<span>Job atual: nenhum</span>";
+
+    agentStatusCard.innerHTML = `
+      <div class="agent-status-header">
+        <span class="agent-ping ${tone}"></span>
+        <div>
+          <strong>${escapeHtml(status.statusLabel || "Sem sinal")}</strong>
+          <p>${escapeHtml(status.agent_name || "Agente local")}</p>
+        </div>
+      </div>
+      <div class="agent-status-body">
+        <p>${escapeHtml(message)}</p>
+        <div class="agent-meta">
+          <span>Estado: ${escapeHtml(status.status || "offline")}</span>
+          ${jobInfo}
+          <span>Ultimo sinal: ${escapeHtml(lastSeen)}</span>
+        </div>
+      </div>
+    `;
+  }
+
   function renderSyncStatus() {
     const status = syncSnapshot.status || "idle";
     statusDot.className = `status-dot status-${status}`;
@@ -220,6 +396,7 @@
     syncButton.disabled = status === "running" || status === "queued";
     cancelSyncButton.classList.toggle("button-hidden", !(status === "running" || status === "queued"));
     cancelSyncButton.disabled = !(status === "running" || status === "queued");
+
     if (status === "running") {
       syncButton.textContent = syncMode === "agent" ? "Agente sincronizando..." : "Sincronizando...";
     } else if (status === "queued") {
@@ -239,7 +416,7 @@
       return;
     }
 
-      jobsList.innerHTML = recentJobs.map((job) => `
+    jobsList.innerHTML = recentJobs.map((job) => `
       <article class="job-card">
         <div class="job-header">
           <strong>${escapeHtml(job.status || "pending")}</strong>
@@ -254,17 +431,148 @@
     `).join("");
   }
 
-  async function refreshDashboardData() {
+  function renderReviewList() {
+    if (!reviewList) {
+      return;
+    }
+
+    if (!payload.review_items.length) {
+      reviewList.innerHTML = '<div class="empty-state">Nenhuma multa em revisao no momento.</div>';
+      return;
+    }
+
+    reviewList.innerHTML = payload.review_items.map((item) => {
+      const key = buildLookupKey(item.auto, item.processo);
+      return `
+        <article class="review-card">
+          <div class="review-card-head">
+            <div>
+              <div class="cell-inline">
+                <strong>${escapeHtml(item.auto)}</strong>
+                ${item.isNew ? '<span class="new-badge">Nova</span>' : ""}
+              </div>
+              <p>${escapeHtml(item.tipo)} | ${escapeHtml(item.processo)}</p>
+            </div>
+            <span class="value-pill value-pill-warning">${escapeHtml(item.statusCarteiraLabel)}</span>
+          </div>
+          <p class="review-message">${escapeHtml(item.mensagemValor || "Sem observacao.")}</p>
+          ${trailMarkup(item.decisionTrail || [])}
+          <label class="field">
+            <span>Nota manual</span>
+            <textarea class="review-note" data-key="${escapeHtml(key)}" rows="3" placeholder="Descreva a decisao manual">${escapeHtml(item.manualOverrideNote || "")}</textarea>
+          </label>
+          <div class="review-actions">
+            <button class="button button-secondary mini-button" type="button" data-action="open-history" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Historico</button>
+            <button class="button button-secondary mini-button" type="button" data-review-action="manter_ativa" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Manter ativa</button>
+            <button class="button button-secondary mini-button" type="button" data-review-action="revisar" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Revisar</button>
+            <button class="button button-danger mini-button" type="button" data-review-action="marcar_quitada" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Marcar quitada</button>
+            <button class="button button-secondary mini-button" type="button" data-review-action="limpar_override" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Limpar</button>
+          </div>
+        </article>
+      `;
+    }).join("");
+  }
+
+  async function openHistory(auto, processo) {
+    if (!historyPanel) {
+      return;
+    }
+
+    currentHistoryTarget = { auto, processo };
+    const item = findFine(auto, processo);
+    historyPanel.className = "history-panel";
+    historyPanel.innerHTML = '<div class="empty-state">Carregando historico da multa selecionada...</div>';
+
+    try {
+      const response = await fetch(`/api/fine-history?auto=${encodeURIComponent(auto || "")}&processo=${encodeURIComponent(processo || "")}`, {
+        credentials: "same-origin"
+      });
+      if (!response.ok) {
+        throw new Error("Nao foi possivel carregar o historico.");
+      }
+
+      const historyPayload = await response.json();
+      const current = item || historyPayload.history[0] || {};
+      const history = historyPayload.history || [];
+      const currentStatus = current.statusCarteiraLabel || current.statusCarteira || "Em acompanhamento";
+
+      historyPanel.innerHTML = `
+        <div class="history-header">
+          <div>
+            <strong>${escapeHtml(current.auto || auto || "Sem auto")}</strong>
+            <p>${escapeHtml(current.tipo || "")} | ${escapeHtml(current.processo || processo || "")}</p>
+          </div>
+          <span class="value-pill ${current.statusCarteira === "quitada_confirmada" ? "value-pill-muted" : "value-pill-warning"}">
+            ${escapeHtml(currentStatus)}
+          </span>
+        </div>
+        <p class="history-highlight">${escapeHtml(current.mensagemValor || current.message || "Sem observacao registrada.")}</p>
+        <section class="history-block">
+          <h3>Trilha de decisao atual</h3>
+          ${trailMarkup(current.decisionTrail || [])}
+        </section>
+        <section class="history-block">
+          <h3>Acao manual</h3>
+          <label class="field">
+            <span>Nota manual</span>
+            <textarea id="historyNoteInput" rows="4" placeholder="Explique a decisao manual">${escapeHtml(current.manualOverrideNote || "")}</textarea>
+          </label>
+          <div class="review-actions">
+            <button class="button button-secondary mini-button" type="button" data-history-action="manter_ativa" data-auto="${escapeHtml(auto)}" data-processo="${escapeHtml(processo)}">Manter ativa</button>
+            <button class="button button-secondary mini-button" type="button" data-history-action="revisar" data-auto="${escapeHtml(auto)}" data-processo="${escapeHtml(processo)}">Marcar revisar</button>
+            <button class="button button-danger mini-button" type="button" data-history-action="marcar_quitada" data-auto="${escapeHtml(auto)}" data-processo="${escapeHtml(processo)}">Marcar quitada</button>
+            <button class="button button-secondary mini-button" type="button" data-history-action="limpar_override" data-auto="${escapeHtml(auto)}" data-processo="${escapeHtml(processo)}">Limpar override</button>
+          </div>
+        </section>
+        <section class="history-block">
+          <h3>Linha do tempo</h3>
+          <div class="history-timeline">
+            ${history.length ? history.map((entry) => `
+              <article class="history-item">
+                <div class="history-item-head">
+                  <strong>${escapeHtml(entry.createdAt || "")}</strong>
+                  <span>${escapeHtml(entry.actor || "sistema")}</span>
+                </div>
+                <p>${escapeHtml(entry.message || "Sem mensagem.")}</p>
+                <span class="history-badge">${escapeHtml(entry.statusCarteiraLabel || entry.statusCarteira || "")}</span>
+                ${trailMarkup(entry.decisionTrail || [])}
+              </article>
+            `).join("") : '<div class="empty-state compact-empty">Nenhum evento historico registrado ainda.</div>'}
+          </div>
+        </section>
+      `;
+    } catch (error) {
+      historyPanel.innerHTML = `<div class="empty-state">Falha ao carregar o historico: ${escapeHtml(error.message || error)}</div>`;
+    }
+  }
+
+  async function refreshDashboardData(options) {
+    const settings = options || {};
+    const previousNewKeys = recentNewKeys;
     const response = await fetch("/api/dashboard-data", { credentials: "same-origin" });
     if (!response.ok) {
       return;
     }
     payload = await response.json();
+    const currentNewItems = payload.new_fines || [];
+    recentNewKeys = new Set(currentNewItems.map((item) => buildLookupKey(item.auto, item.processo)));
+    const newlyArrived = currentNewItems.filter((item) => !previousNewKeys.has(buildLookupKey(item.auto, item.processo)));
     updateSummary();
+    renderNewFinesBanner();
     updateTypeFilter();
+    updatePortfolioStatusFilter();
     renderTable();
     renderTypeCards();
     renderTopFines();
+    renderReviewList();
+    renderAgentStatus();
+    if (hasLoadedOnce && newlyArrived.length) {
+      showNewFinesToast(newlyArrived);
+    }
+    hasLoadedOnce = true;
+    if (currentHistoryTarget && settings.keepHistory !== false) {
+      await openHistory(currentHistoryTarget.auto, currentHistoryTarget.processo);
+    }
   }
 
   async function refreshSyncStatus() {
@@ -276,6 +584,7 @@
     recentJobs = syncSnapshot.jobs || recentJobs;
     renderSyncStatus();
     renderJobs();
+    renderAgentStatus();
     if (syncSnapshot.status === "success" && syncSnapshot.last_success_at !== lastSuccessKey) {
       lastSuccessKey = syncSnapshot.last_success_at || "";
       await refreshDashboardData();
@@ -293,8 +602,8 @@
       return;
     }
 
-    const payload = await response.json().catch(() => ({ message: "Falha ao iniciar sincronizacao." }));
-    alert(payload.message || payload.error || "Falha ao iniciar sincronizacao.");
+    const errorPayload = await response.json().catch(() => ({ message: "Falha ao iniciar sincronizacao." }));
+    alert(errorPayload.message || errorPayload.error || "Falha ao iniciar sincronizacao.");
   }
 
   async function cancelSync() {
@@ -308,21 +617,96 @@
       return;
     }
 
-    const payload = await response.json().catch(() => ({ message: "Falha ao cancelar sincronizacao." }));
-    alert(payload.message || payload.error || "Falha ao cancelar sincronizacao.");
+    const errorPayload = await response.json().catch(() => ({ message: "Falha ao cancelar sincronizacao." }));
+    alert(errorPayload.message || errorPayload.error || "Falha ao cancelar sincronizacao.");
   }
+
+  async function submitManualReview(auto, processo, action, note) {
+    const response = await fetch("/api/fines/review", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8"
+      },
+      body: JSON.stringify({
+        auto,
+        processo,
+        action,
+        note: note || ""
+      })
+    });
+
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => ({ message: "Falha ao registrar a revisao manual." }));
+      alert(errorPayload.message || errorPayload.error || "Falha ao registrar a revisao manual.");
+      return;
+    }
+
+    await refreshDashboardData();
+    await refreshSyncStatus();
+  }
+
+  dashboardRoot.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-action='open-history']");
+    if (!button) {
+      return;
+    }
+    await openHistory(button.dataset.auto || "", button.dataset.processo || "");
+  });
+
+  reviewList.addEventListener("click", async (event) => {
+    const historyButton = event.target.closest("[data-action='open-history']");
+    if (historyButton) {
+      await openHistory(historyButton.dataset.auto || "", historyButton.dataset.processo || "");
+      return;
+    }
+
+    const actionButton = event.target.closest("[data-review-action]");
+    if (!actionButton) {
+      return;
+    }
+
+    const auto = actionButton.dataset.auto || "";
+    const processo = actionButton.dataset.processo || "";
+    const key = buildLookupKey(auto, processo);
+    const noteField = findReviewNoteField(key);
+    const note = noteField ? noteField.value : "";
+    await submitManualReview(auto, processo, actionButton.dataset.reviewAction || "", note);
+    await openHistory(auto, processo);
+  });
+
+  historyPanel.addEventListener("click", async (event) => {
+    const actionButton = event.target.closest("[data-history-action]");
+    if (!actionButton) {
+      return;
+    }
+
+    const noteField = byId("historyNoteInput");
+    await submitManualReview(
+      actionButton.dataset.auto || "",
+      actionButton.dataset.processo || "",
+      actionButton.dataset.historyAction || "",
+      noteField ? noteField.value : ""
+    );
+    await openHistory(actionButton.dataset.auto || "", actionButton.dataset.processo || "");
+  });
 
   searchInput.addEventListener("input", renderTable);
   typeFilter.addEventListener("change", renderTable);
+  portfolioStatusFilter.addEventListener("change", renderTable);
   syncButton.addEventListener("click", startSync);
   cancelSyncButton.addEventListener("click", cancelSync);
 
   updateSummary();
+  renderNewFinesBanner();
   updateTypeFilter();
+  updatePortfolioStatusFilter();
   renderTable();
   renderTypeCards();
   renderTopFines();
+  renderReviewList();
   renderSyncStatus();
   renderJobs();
+  renderAgentStatus();
   window.setInterval(refreshSyncStatus, 4000);
 })();
