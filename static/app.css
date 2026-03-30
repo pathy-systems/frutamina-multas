@@ -178,15 +178,22 @@ body {
   margin-top: 18px;
   display: flex;
   justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.login-actions .button {
+  min-width: 180px;
 }
 
 .modal-dialog {
   width: min(520px, calc(100vw - 28px));
-  border: 0;
+  border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 26px;
-  padding: 0;
-  background: transparent;
-  box-shadow: none;
+  padding: 28px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--text);
 }
 
 .modal-dialog::backdrop {
@@ -201,38 +208,16 @@ body {
   margin: 0;
 }
 
-.modal-dialog > .alert,
-.modal-dialog > .helper-text,
-.modal-dialog > .login-form {
-  padding-left: 28px;
-  padding-right: 28px;
-}
-
 .modal-dialog > .helper-text {
-  margin-bottom: 4px;
-}
-
-.modal-dialog > .login-form {
-  padding-bottom: 28px;
+  margin: 10px 0 0;
+  color: var(--muted);
 }
 
 .modal-shell {
   display: grid;
   gap: 12px;
-  padding: 28px 28px 10px;
-  background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  border-radius: 26px 26px 0 0;
-}
-
-.modal-dialog > .alert,
-.modal-dialog > .helper-text,
-.modal-dialog > .login-form {
-  background: var(--panel);
-}
-
-.modal-dialog > .login-form {
-  border-radius: 0 0 26px 26px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--line);
 }
 
 .modal-header,
@@ -244,7 +229,7 @@ body {
 }
 
 .modal-actions {
-  margin-top: 8px;
+  margin-top: 12px;
   justify-content: flex-end;
   flex-wrap: wrap;
 }
@@ -267,6 +252,15 @@ body {
 
 .modal-header h3 {
   margin: 6px 0 0;
+}
+
+.modal-dialog .alert {
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
+.modal-dialog .login-form {
+  gap: 14px;
 }
 
 input,
@@ -817,11 +811,17 @@ th {
 
 .users-grid {
   margin-top: 20px;
+  display: grid;
+  gap: 20px;
 }
 
 .users-admin-card {
   padding: 26px;
   margin-top: 20px;
+}
+
+.users-grid > .card {
+  padding: 26px;
 }
 
 .manual-groups {
@@ -920,6 +920,11 @@ th {
   min-width: 1080px;
 }
 
+.admin-table th,
+.admin-table td {
+  padding: 18px 18px;
+}
+
 .admin-table td {
   vertical-align: middle;
 }
@@ -936,10 +941,12 @@ th {
 .inline-review-form {
   display: grid;
   gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: center;
 }
 
 .inline-review-form input {
-  min-width: 220px;
+  min-width: 180px;
 }
 
 .password-cell {
@@ -1173,6 +1180,10 @@ code {
   }
 
   .user-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-review-form {
     grid-template-columns: 1fr;
   }
 
