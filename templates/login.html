@@ -43,6 +43,7 @@
         </form>
         <div class="login-actions">
           <button class="button button-secondary" id="openRequestModal" type="button">Criar conta</button>
+          <button class="button button-secondary" id="openResetModal" type="button">Esqueci minha senha</button>
         </div>
       </div>
     </section>
@@ -55,13 +56,13 @@
           <p class="eyebrow modal-eyebrow">Solicitacao de acesso</p>
           <h3>Criar conta</h3>
         </div>
-        <button class="modal-close" type="submit" aria-label="Fechar">×</button>
+        <button class="modal-close" type="submit" aria-label="Fechar">&times;</button>
       </div>
     </form>
 
-    {% if request_message %}
-    <div class="alert {% if request_tone == 'error' %}alert-error{% else %}alert-info{% endif %}">
-      {{ request_message }}
+    {% if auth_message and auth_modal == "account" %}
+    <div class="alert {% if auth_tone == 'error' %}alert-error{% else %}alert-info{% endif %}">
+      {{ auth_message }}
     </div>
     {% endif %}
 
@@ -84,32 +85,74 @@
     </form>
   </dialog>
 
+  <dialog id="passwordResetModal" class="modal-dialog">
+    <form method="dialog" class="modal-shell">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow modal-eyebrow">Redefinicao de senha</p>
+          <h3>Esqueci minha senha</h3>
+        </div>
+        <button class="modal-close" type="submit" aria-label="Fechar">&times;</button>
+      </div>
+    </form>
+
+    {% if auth_message and auth_modal == "reset" %}
+    <div class="alert {% if auth_tone == 'error' %}alert-error{% else %}alert-info{% endif %}">
+      {{ auth_message }}
+    </div>
+    {% endif %}
+
+    <p class="helper-text">Envie uma solicitacao para o administrador redefinir sua senha e liberar um novo acesso.</p>
+
+    <form class="login-form" method="post" action="/password-reset-request">
+      <label for="reset_display_name">Seu nome</label>
+      <input id="reset_display_name" name="display_name" type="text" autocomplete="name" required>
+
+      <label for="reset_username">Seu login</label>
+      <input id="reset_username" name="username" type="text" autocomplete="username" required>
+
+      <div class="modal-actions">
+        <button class="button button-secondary" id="closeResetModal" type="button">Cancelar</button>
+        <button class="button button-primary" type="submit">Enviar solicitacao</button>
+      </div>
+    </form>
+  </dialog>
+
   <script>
     (() => {
-      const modal = document.getElementById("accountRequestModal");
-      const openButton = document.getElementById("openRequestModal");
-      const closeButton = document.getElementById("closeRequestModal");
-      if (!modal || !openButton || typeof modal.showModal !== "function") {
-        return;
+      function bindModal(modalId, openButtonId, closeButtonId) {
+        const modal = document.getElementById(modalId);
+        const openButton = document.getElementById(openButtonId);
+        const closeButton = document.getElementById(closeButtonId);
+        if (!modal || !openButton || typeof modal.showModal !== "function") {
+          return null;
+        }
+
+        openButton.addEventListener("click", () => modal.showModal());
+        closeButton?.addEventListener("click", () => modal.close());
+        modal.addEventListener("click", (event) => {
+          const rect = modal.getBoundingClientRect();
+          const inside =
+            event.clientX >= rect.left &&
+            event.clientX <= rect.right &&
+            event.clientY >= rect.top &&
+            event.clientY <= rect.bottom;
+          if (!inside) {
+            modal.close();
+          }
+        });
+        return modal;
       }
 
-      openButton.addEventListener("click", () => modal.showModal());
-      closeButton?.addEventListener("click", () => modal.close());
-      modal.addEventListener("click", (event) => {
-        const rect = modal.getBoundingClientRect();
-        const inside =
-          event.clientX >= rect.left &&
-          event.clientX <= rect.right &&
-          event.clientY >= rect.top &&
-          event.clientY <= rect.bottom;
-        if (!inside) {
-          modal.close();
-        }
-      });
+      const accountModal = bindModal("accountRequestModal", "openRequestModal", "closeRequestModal");
+      const resetModal = bindModal("passwordResetModal", "openResetModal", "closeResetModal");
+      const modalToOpen = "{{ auth_modal }}";
 
-      const shouldOpen = {{ 'true' if request_message else 'false' }};
-      if (shouldOpen) {
-        modal.showModal();
+      if (modalToOpen === "account" && accountModal) {
+        accountModal.showModal();
+      }
+      if (modalToOpen === "reset" && resetModal) {
+        resetModal.showModal();
       }
     })();
   </script>

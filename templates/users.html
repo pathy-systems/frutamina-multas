@@ -94,6 +94,51 @@
       </div>
     </section>
 
+    <section class="card users-admin-card">
+      <div class="section-header">
+        <div>
+          <h2>Redefinicoes de senha pendentes</h2>
+          <p class="helper-text">Quando aprovar, informe a nova senha que sera entregue ao usuario.</p>
+        </div>
+      </div>
+      <div class="table-wrapper admin-table-wrapper">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Solicitada em</th>
+              <th>Nome</th>
+              <th>Login</th>
+              <th>Status</th>
+              <th>Acao</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for request in pending_password_resets %}
+            <tr>
+              <td>{{ request.requested_at or "Sem data" }}</td>
+              <td>{{ request.display_name }}</td>
+              <td>@{{ request.username }}</td>
+              <td><span class="user-badge user-badge-role">{{ request.statusLabel }}</span></td>
+              <td>
+                <form class="inline-review-form" method="post" action="/admin/password-reset/review">
+                  <input type="hidden" name="request_id" value="{{ request.request_id }}">
+                  <input name="new_password" type="password" placeholder="Nova senha" required>
+                  <input name="review_note" type="text" placeholder="Observacao opcional">
+                  <button class="button button-primary mini-button" type="submit" name="action" value="approve">Aprovar</button>
+                  <button class="button button-danger mini-button" type="submit" name="action" value="reject">Recusar</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="5"><div class="empty-state">Nenhuma solicitacao de redefinicao pendente.</div></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="users-grid">
       <article class="card">
         <div class="section-header">
@@ -162,13 +207,23 @@
                     </label>
                   </div>
                 </td>
-                <td>
-                  <form id="user-form-{{ loop.index }}" method="post" action="/admin/users/update">
-                    <input type="hidden" name="username" value="{{ user.username }}">
-                  </form>
-                  <button form="user-form-{{ loop.index }}" class="button button-secondary mini-button" type="submit">Salvar</button>
-                </td>
-              </tr>
+                  <td>
+                    <form id="user-form-{{ loop.index }}" method="post" action="/admin/users/update">
+                      <input type="hidden" name="username" value="{{ user.username }}">
+                    </form>
+                    <form
+                      id="delete-user-form-{{ loop.index }}"
+                      method="post"
+                      action="/admin/users/delete"
+                      onsubmit="return confirm('Deseja realmente remover este usuario?');">
+                      <input type="hidden" name="username" value="{{ user.username }}">
+                    </form>
+                    <div class="user-actions">
+                      <button form="user-form-{{ loop.index }}" class="button button-secondary mini-button" type="submit">Salvar</button>
+                      <button form="delete-user-form-{{ loop.index }}" class="button button-danger mini-button" type="submit">Remover</button>
+                    </div>
+                  </td>
+                </tr>
               {% else %}
               <tr>
                 <td colspan="8"><div class="empty-state">Nenhum usuario cadastrado ainda.</div></td>

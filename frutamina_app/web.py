@@ -174,6 +174,17 @@ def _users_location(message: str = "", tone: str = "info") -> str:
     return location
 
 
+def _login_location(message: str = "", tone: str = "info", modal: str = "") -> str:
+    payload: dict[str, str] = {}
+    if message:
+        payload["auth_message"] = message
+        payload["auth_tone"] = tone
+    if modal:
+        payload["auth_modal"] = modal
+    query = urlencode(payload) if payload else ""
+    return f"/login?{query}" if query else "/login"
+
+
 def _agent_request_authorized(handler: SimpleHTTPRequestHandler) -> bool:
     if not CONFIG.sync_agent_token:
         return False
@@ -212,8 +223,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "login.html",
                     page_title="Login | Frutamina Multas",
                     error_message="",
-                    request_message=(params.get("request_message") or [""])[0],
-                    request_tone=(params.get("request_tone") or ["info"])[0],
+                    auth_message=(params.get("auth_message") or [""])[0],
+                    auth_tone=(params.get("auth_tone") or ["info"])[0],
+                    auth_modal=(params.get("auth_modal") or [""])[0],
                 ),
             )
             return
@@ -281,6 +293,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     is_admin=True,
                     users=users,
                     pending_requests=_store.list_account_requests("pending"),
+                    pending_password_resets=_store.list_password_reset_requests("pending"),
                     admin_message=(params.get("admin_message") or [""])[0],
                     admin_tone=(params.get("admin_tone") or ["info"])[0],
                     mock_mode=CONFIG.mock_sync,
@@ -391,8 +404,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "login.html",
                     page_title="Login | Frutamina Multas",
                     error_message="Usuario ou senha invalidos.",
-                    request_message="",
-                    request_tone="info",
+                    auth_message="",
+                    auth_tone="info",
+                    auth_modal="",
                 ),
                 HTTPStatus.UNAUTHORIZED,
             )
@@ -405,11 +419,16 @@ class AppHandler(SimpleHTTPRequestHandler):
                 username=form.get("username", ""),
                 password=form.get("password", ""),
             )
-            query = urlencode({
-                "request_message": message,
-                "request_tone": "info" if ok else "error",
-            })
-            _redirect(self, f"/login?{query}")
+            _redirect(self, _login_location(message, "info" if ok else "error", "account"))
+            return
+
+        if route == "/password-reset-request":
+            form = _read_form(self)
+            ok, message = _store.submit_password_reset_request(
+                username=form.get("username", ""),
+                display_name=form.get("display_name", ""),
+            )
+            _redirect(self, _login_location(message, "info" if ok else "error", "reset"))
             return
 
         if route == "/admin/users/create":
@@ -451,6 +470,26 @@ class AppHandler(SimpleHTTPRequestHandler):
             _redirect(self, _users_location(message, "info" if ok else "error"))
             return
 
+        if route == "/admin/password-reset/review":
+            user = _current_user(self)
+            if not user:
+                _redirect(self, "/login")
+                return
+            if user.get("role") != "admin":
+                _redirect(self, _dashboard_location("Somente administradores podem gerenciar redefinicoes.", "error"))
+                return
+
+            form = _read_form(self)
+            ok, message = _store.review_password_reset_request(
+                request_id=form.get("request_id", ""),
+                action=form.get("action", ""),
+                actor=str(user.get("username") or ""),
+                new_password=form.get("new_password", ""),
+                note=form.get("review_note", ""),
+            )
+            _redirect(self, _users_location(message, "info" if ok else "error"))
+            return
+
         if route == "/admin/users/update":
             user = _current_user(self)
             if not user:
@@ -468,6 +507,23 @@ class AppHandler(SimpleHTTPRequestHandler):
                 is_active=form.get("is_active") == "1",
                 new_password=form.get("new_password", ""),
                 actor=str(user.get("username") or ""),
+                acting_username=str(user.get("username") or ""),
+            )
+            _redirect(self, _users_location(message, "info" if ok else "error"))
+            return
+
+        if route == "/admin/users/delete":
+            user = _current_user(self)
+            if not user:
+                _redirect(self, "/login")
+                return
+            if user.get("role") != "admin":
+                _redirect(self, _dashboard_location("Somente administradores podem remover usuarios.", "error"))
+                return
+
+            form = _read_form(self)
+            ok, message = _store.delete_user(
+                username=form.get("username", ""),
                 acting_username=str(user.get("username") or ""),
             )
             _redirect(self, _users_location(message, "info" if ok else "error"))
