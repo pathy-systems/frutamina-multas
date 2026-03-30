@@ -61,6 +61,57 @@
     `;
   }
 
+  function buildPdfDocument(rows) {
+    const printableRows = rows.map((item) => `
+      <tr>
+        <td>${escapeHtml(item.auto)}</td>
+        <td>${escapeHtml(item.tipo)}</td>
+        <td>${escapeHtml(item.processo)}</td>
+        <td>${escapeHtml(item.situacao)}</td>
+        <td>${escapeHtml(item.dataAuto)}</td>
+        <td>${escapeHtml(item.valorDisponivel ? item.valor : (item.mensagemValor || "Sem valor"))}</td>
+        <td>${escapeHtml(item.statusCarteiraLabel || "")}</td>
+      </tr>
+    `).join("");
+
+    return `
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="utf-8">
+        <title>Multas ANTT</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 24px; color: #102340; }
+          h1 { margin: 0 0 8px; font-size: 24px; }
+          p { margin: 0 0 16px; color: #5f6e86; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #d9e2f0; padding: 10px 12px; text-align: left; vertical-align: top; }
+          th { background: #f4f7fd; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+          td { font-size: 13px; }
+        </style>
+      </head>
+      <body>
+        <h1>Multas ANTT</h1>
+        <p>Exportado do painel com ${rows.length} multa(s).</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Auto</th>
+              <th>Tipo</th>
+              <th>Processo</th>
+              <th>Situacao</th>
+              <th>Data</th>
+              <th>Valor / Status</th>
+              <th>Status interno</th>
+            </tr>
+          </thead>
+          <tbody>${printableRows}</tbody>
+        </table>
+      </body>
+      </html>
+    `;
+  }
+
   function findReviewNoteField(key) {
     return Array.from(reviewList.querySelectorAll("textarea[data-key]")).find((node) => node.dataset.key === key) || null;
   }
@@ -131,6 +182,10 @@
   const newFinesBannerTitle = byId("newFinesBannerTitle");
   const newFinesBannerText = byId("newFinesBannerText");
   const newFinesToast = byId("newFinesToast");
+  const tableExportButton = byId("tableExportButton");
+  const tableExportMenu = byId("tableExportMenu");
+  const exportPdfButton = byId("exportPdfButton");
+  const exportCsvButton = byId("exportCsvButton");
 
   function findFine(auto, processo) {
     const key = buildLookupKey(auto, processo);
@@ -341,6 +396,36 @@
         </tr>
       `;
     }).join("");
+  }
+
+  function setExportMenuOpen(isOpen) {
+    if (!tableExportMenu || !tableExportButton) {
+      return;
+    }
+    tableExportMenu.hidden = !isOpen;
+    tableExportButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  }
+
+  function exportFilteredTableAsPdf() {
+    const rows = filteredFines();
+    if (!rows.length) {
+      alert("Nao ha multas visiveis para exportar.");
+      return;
+    }
+
+    const popup = window.open("", "_blank", "noopener,noreferrer,width=1100,height=800");
+    if (!popup) {
+      alert("O navegador bloqueou a janela de exportacao. Permita pop-ups para gerar o PDF.");
+      return;
+    }
+
+    popup.document.open();
+    popup.document.write(buildPdfDocument(rows));
+    popup.document.close();
+    popup.focus();
+    window.setTimeout(() => {
+      popup.print();
+    }, 250);
   }
 
   function renderTypeCards() {
@@ -737,6 +822,33 @@
     const note = window.prompt("Observacao opcional para marcar esta multa como paga:") || "";
     await markFineAsPaid(auto, processo, note);
   });
+
+  if (tableExportButton && tableExportMenu) {
+    tableExportButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setExportMenuOpen(tableExportMenu.hidden);
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!tableExportMenu.hidden && !event.target.closest(".export-menu-shell")) {
+        setExportMenuOpen(false);
+      }
+    });
+  }
+
+  if (exportPdfButton) {
+    exportPdfButton.addEventListener("click", () => {
+      setExportMenuOpen(false);
+      exportFilteredTableAsPdf();
+    });
+  }
+
+  if (exportCsvButton) {
+    exportCsvButton.addEventListener("click", () => {
+      setExportMenuOpen(false);
+      window.location.href = "/export/csv";
+    });
+  }
 
   reviewList.addEventListener("click", async (event) => {
     const historyButton = event.target.closest("[data-action='open-history']");
