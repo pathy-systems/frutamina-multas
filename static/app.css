@@ -437,6 +437,7 @@ th {
 .value-cell {
   display: grid;
   gap: 6px;
+  text-align: center;
 }
 
 .cell-muted {
