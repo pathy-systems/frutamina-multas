@@ -687,7 +687,7 @@ class FineStore:
             return False, "Acao de revisao invalida."
 
         target.manual_override_status = action_map[action]
-        target.manual_override_note = note.strip()
+        target.manual_override_note = "" if action == "limpar_override" else note.strip()
         self.save(fines, actor=actor, preserve_current_overrides=True)
         return True, "Revisao manual atualizada."
 

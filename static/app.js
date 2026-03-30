@@ -692,6 +692,7 @@
   }
 
   async function submitManualReview(auto, processo, action, note) {
+    const normalizedNote = action === "limpar_override" ? "" : (note || "");
     const response = await fetch("/api/fines/review", {
       method: "POST",
       credentials: "same-origin",
@@ -702,7 +703,7 @@
         auto,
         processo,
         action,
-        note: note || ""
+        note: normalizedNote
       })
     });
 
