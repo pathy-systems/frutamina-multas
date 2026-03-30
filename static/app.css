@@ -322,11 +322,14 @@ textarea:focus {
 .operational-grid {
   margin-bottom: 20px;
   grid-template-columns: minmax(320px, 0.92fr) minmax(0, 1.08fr);
+  align-items: start;
 }
 
 .agent-card,
 .jobs-card {
   padding: 26px;
+  align-self: start;
+  height: auto;
 }
 
 .stats-grid {
@@ -519,6 +522,10 @@ th {
 .history-panel {
   display: grid;
   gap: 16px;
+}
+
+.agent-status-panel {
+  min-height: 0;
 }
 
 .agent-status-header,

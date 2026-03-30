@@ -84,7 +84,23 @@
             <p class="helper-text">Heartbeat do computador que abre a ANTT e executa a leitura.</p>
           </div>
         </div>
-        <div id="agentStatusCard" class="agent-status-panel"></div>
+        <div id="agentStatusCard" class="agent-status-panel">
+          <div class="agent-status-header">
+            <span class="agent-ping agent-offline"></span>
+            <div>
+              <strong>Sem sinal</strong>
+              <p>Agente local</p>
+            </div>
+          </div>
+          <div class="agent-status-body">
+            <p>Aguardando heartbeat do agente.</p>
+            <div class="agent-meta">
+              <span>Estado: offline</span>
+              <span>Job atual: nenhum</span>
+              <span>Ultimo sinal: Sem heartbeat</span>
+            </div>
+          </div>
+        </div>
       </article>
 
       <article class="card jobs-card">
