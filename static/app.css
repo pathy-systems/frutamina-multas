@@ -513,6 +513,12 @@ th {
   padding: 10px 14px;
 }
 
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .mini-button {
   padding: 10px 14px;
   font-size: 0.9rem;
@@ -596,6 +602,20 @@ th {
   margin-top: 20px;
 }
 
+.manual-groups {
+  display: grid;
+  gap: 24px;
+}
+
+.manual-group {
+  display: grid;
+  gap: 14px;
+}
+
+.manual-group h3 {
+  margin: 0;
+}
+
 .review-card,
 .history-item {
   border: 1px solid var(--line);
@@ -607,6 +627,10 @@ th {
 .review-card {
   display: grid;
   gap: 14px;
+}
+
+.paid-card {
+  background: rgba(95, 110, 134, 0.06);
 }
 
 .review-note {

@@ -890,7 +890,8 @@ class FineStore:
     def build_dashboard_payload(self) -> dict[str, object]:
         fines = self.load()
         visible_fines = [fine for fine in fines if fine.status_carteira != "quitada_confirmada"]
-        review_items = [fine for fine in fines if fine.status_carteira in {"revisar", "quitada_confirmada"}]
+        review_items = [fine for fine in fines if fine.status_carteira == "revisar"]
+        paid_items = [fine for fine in fines if fine.status_carteira == "quitada_confirmada"]
         new_fines = [fine for fine in visible_fines if _is_recent_new(fine.first_seen_at)]
         pdf_names = self.available_pdf_names()
         fines_com_valor = [fine for fine in visible_fines if fine.valor_disponivel]
@@ -911,7 +912,7 @@ class FineStore:
                 "available_boleto_count": len(fines_com_valor),
                 "pending_boleto_count": len(visible_fines) - len(fines_com_valor),
                 "review_count": portfolio_status.get("revisar", 0),
-                "manual_quitada_count": len([fine for fine in fines if fine.status_carteira == "quitada_confirmada"]),
+                "manual_quitada_count": len(paid_items),
                 "new_count": len(new_fines),
                 "active_types": len(tipos),
                 "updated_at": updated_at or "Sem sincronizacao ainda",
@@ -963,6 +964,23 @@ class FineStore:
                     "isNew": _is_recent_new(fine.first_seen_at),
                 }
                 for fine in review_items
+            ],
+            "paid_items": [
+                {
+                    "tipo": fine.tipo_fiscalizacao,
+                    "auto": fine.auto_infracao,
+                    "processo": fine.numero_processo,
+                    "situacao": fine.situacao,
+                    "mensagemValor": fine.mensagem_valor,
+                    "statusCarteira": fine.status_carteira,
+                    "statusCarteiraLabel": _label_status_carteira(fine.status_carteira),
+                    "decisionTrail": fine.decision_trail,
+                    "manualOverrideStatus": fine.manual_override_status,
+                    "manualOverrideNote": fine.manual_override_note,
+                    "firstSeenAt": fine.first_seen_at,
+                    "isNew": _is_recent_new(fine.first_seen_at),
+                }
+                for fine in paid_items
             ],
             "fines": [
                 {

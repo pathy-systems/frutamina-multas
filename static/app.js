@@ -76,6 +76,7 @@
       agent_name: ""
     },
     review_items: [],
+    paid_items: [],
     fines: []
   });
   let syncSnapshot = parseJsonScript("initialSyncSnapshot", {
@@ -104,6 +105,7 @@
   const statusMessage = byId("syncStatusMessage");
   const jobsList = byId("jobsList");
   const reviewList = byId("reviewList");
+  const paidList = byId("paidList");
   const historyPanel = byId("historyPanel");
   const agentStatusCard = byId("agentStatusCard");
   const newFinesBanner = byId("newFinesBanner");
@@ -126,7 +128,7 @@
     byId("totalValueHint").textContent =
       `${payload.summary.available_boleto_count || 0} boleto(s) com valor encontrado | ` +
       `${payload.summary.review_count || 0} em revisao | ` +
-      `${payload.summary.manual_quitada_count || 0} quitada(s) ocultas`;
+      `${payload.summary.manual_quitada_count || 0} paga(s) manualmente`;
     byId("activeTypesValue").textContent = payload.summary.active_types;
     byId("newFinesValue").textContent = payload.summary.new_count || 0;
     byId("newFinesHint").textContent = payload.summary.new_count
@@ -292,14 +294,24 @@
           <td>${valueCell}</td>
           <td>${pdf}</td>
           <td>
-            <button
-              class="button button-secondary table-action"
-              type="button"
-              data-action="open-history"
-              data-auto="${escapeHtml(item.auto)}"
-              data-processo="${escapeHtml(item.processo)}">
-              Abrir analise
-            </button>
+            <div class="table-actions">
+              <button
+                class="button button-secondary table-action"
+                type="button"
+                data-action="open-history"
+                data-auto="${escapeHtml(item.auto)}"
+                data-processo="${escapeHtml(item.processo)}">
+                Abrir analise
+              </button>
+              <button
+                class="button button-secondary table-action"
+                type="button"
+                data-action="mark-paid"
+                data-auto="${escapeHtml(item.auto)}"
+                data-processo="${escapeHtml(item.processo)}">
+                Marcar paga
+              </button>
+            </div>
           </td>
         </tr>
       `;
@@ -465,12 +477,44 @@
             <button class="button button-secondary mini-button" type="button" data-action="open-history" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Historico</button>
             <button class="button button-secondary mini-button" type="button" data-review-action="manter_ativa" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Manter ativa</button>
             <button class="button button-secondary mini-button" type="button" data-review-action="revisar" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Revisar</button>
-            <button class="button button-danger mini-button" type="button" data-review-action="marcar_quitada" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Marcar quitada</button>
+            <button class="button button-danger mini-button" type="button" data-review-action="marcar_quitada" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Marcar paga</button>
             <button class="button button-secondary mini-button" type="button" data-review-action="limpar_override" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Limpar</button>
           </div>
         </article>
       `;
     }).join("");
+  }
+
+  function renderPaidList() {
+    if (!paidList) {
+      return;
+    }
+
+    if (!payload.paid_items.length) {
+      paidList.innerHTML = '<div class="empty-state">Nenhuma multa marcada manualmente como paga.</div>';
+      return;
+    }
+
+    paidList.innerHTML = payload.paid_items.map((item) => `
+      <article class="review-card paid-card">
+        <div class="review-card-head">
+          <div>
+            <div class="cell-inline">
+              <strong>${escapeHtml(item.auto)}</strong>
+              ${item.isNew ? '<span class="new-badge">Nova</span>' : ""}
+            </div>
+            <p>${escapeHtml(item.tipo)} | ${escapeHtml(item.processo)}</p>
+          </div>
+          <span class="value-pill value-pill-muted">Paga manualmente</span>
+        </div>
+        <p class="review-message">${escapeHtml(item.manualOverrideNote || item.mensagemValor || "Marcada manualmente como paga.")}</p>
+        ${trailMarkup(item.decisionTrail || [])}
+        <div class="review-actions">
+          <button class="button button-secondary mini-button" type="button" data-action="open-history" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Historico</button>
+          <button class="button button-secondary mini-button" type="button" data-paid-action="limpar_override" data-auto="${escapeHtml(item.auto)}" data-processo="${escapeHtml(item.processo)}">Remover marcacao</button>
+        </div>
+      </article>
+    `).join("");
   }
 
   async function openHistory(auto, processo) {
@@ -520,7 +564,7 @@
           <div class="review-actions">
             <button class="button button-secondary mini-button" type="button" data-history-action="manter_ativa" data-auto="${escapeHtml(auto)}" data-processo="${escapeHtml(processo)}">Manter ativa</button>
             <button class="button button-secondary mini-button" type="button" data-history-action="revisar" data-auto="${escapeHtml(auto)}" data-processo="${escapeHtml(processo)}">Marcar revisar</button>
-            <button class="button button-danger mini-button" type="button" data-history-action="marcar_quitada" data-auto="${escapeHtml(auto)}" data-processo="${escapeHtml(processo)}">Marcar quitada</button>
+            <button class="button button-danger mini-button" type="button" data-history-action="marcar_quitada" data-auto="${escapeHtml(auto)}" data-processo="${escapeHtml(processo)}">Marcar paga</button>
             <button class="button button-secondary mini-button" type="button" data-history-action="limpar_override" data-auto="${escapeHtml(auto)}" data-processo="${escapeHtml(processo)}">Limpar override</button>
           </div>
         </section>
@@ -565,6 +609,7 @@
     renderTypeCards();
     renderTopFines();
     renderReviewList();
+    renderPaidList();
     renderAgentStatus();
     if (hasLoadedOnce && newlyArrived.length) {
       showNewFinesToast(newlyArrived);
@@ -646,12 +691,25 @@
     await refreshSyncStatus();
   }
 
+  async function markFineAsPaid(auto, processo, note) {
+    await submitManualReview(auto, processo, "marcar_quitada", note || "");
+  }
+
   dashboardRoot.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-action='open-history']");
-    if (!button) {
+    const historyButton = event.target.closest("[data-action='open-history']");
+    if (historyButton) {
+      await openHistory(historyButton.dataset.auto || "", historyButton.dataset.processo || "");
       return;
     }
-    await openHistory(button.dataset.auto || "", button.dataset.processo || "");
+
+    const paidButton = event.target.closest("[data-action='mark-paid']");
+    if (!paidButton) {
+      return;
+    }
+    const auto = paidButton.dataset.auto || "";
+    const processo = paidButton.dataset.processo || "";
+    const note = window.prompt("Observacao opcional para marcar esta multa como paga:") || "";
+    await markFineAsPaid(auto, processo, note);
   });
 
   reviewList.addEventListener("click", async (event) => {
@@ -674,6 +732,28 @@
     await submitManualReview(auto, processo, actionButton.dataset.reviewAction || "", note);
     await openHistory(auto, processo);
   });
+
+  if (paidList) {
+    paidList.addEventListener("click", async (event) => {
+      const historyButton = event.target.closest("[data-action='open-history']");
+      if (historyButton) {
+        await openHistory(historyButton.dataset.auto || "", historyButton.dataset.processo || "");
+        return;
+      }
+
+      const actionButton = event.target.closest("[data-paid-action]");
+      if (!actionButton) {
+        return;
+      }
+
+      await submitManualReview(
+        actionButton.dataset.auto || "",
+        actionButton.dataset.processo || "",
+        actionButton.dataset.paidAction || "",
+        ""
+      );
+    });
+  }
 
   historyPanel.addEventListener("click", async (event) => {
     const actionButton = event.target.closest("[data-history-action]");
@@ -705,6 +785,7 @@
   renderTypeCards();
   renderTopFines();
   renderReviewList();
+  renderPaidList();
   renderSyncStatus();
   renderJobs();
   renderAgentStatus();

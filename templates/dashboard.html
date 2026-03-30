@@ -28,7 +28,7 @@
     <nav class="top-nav">
       <a class="pill pill-active" href="#dashboard">Dashboard</a>
       <a class="pill" href="#multas">Multas</a>
-      <a class="pill" href="#revisao">Revisao</a>
+      <a class="pill" href="#revisao">Organizacao</a>
       <a class="pill" href="#historico">Historico</a>
       <a class="pill" href="#resumo">Resumo</a>
       <a class="pill" href="/logout">Sair</a>
@@ -160,18 +160,27 @@
       <article class="card">
         <div class="section-header">
           <div>
-            <h2>Fila de revisao</h2>
-            <p class="helper-text">Casos com divergencia de historico ou marcados manualmente como quitados.</p>
+            <h2>Organizacao manual</h2>
+            <p class="helper-text">Organize multas em revisao e acompanhe as que ja foram marcadas manualmente como pagas.</p>
           </div>
         </div>
-        <div id="reviewList" class="stack-list"></div>
+        <div class="manual-groups">
+          <section class="manual-group">
+            <h3>Para revisar</h3>
+            <div id="reviewList" class="stack-list"></div>
+          </section>
+          <section class="manual-group">
+            <h3>Pagas manualmente</h3>
+            <div id="paidList" class="stack-list"></div>
+          </section>
+        </div>
       </article>
 
       <article class="card" id="historico">
         <div class="section-header">
           <div>
             <h2>Historico e acao manual</h2>
-            <p class="helper-text">Abra uma multa para ver a trilha de decisao e registrar um override manual.</p>
+            <p class="helper-text">Abra uma multa para ver a trilha de decisao e registrar se ela deve ficar ativa, em revisao ou paga manualmente.</p>
           </div>
         </div>
         <div id="historyPanel" class="history-panel empty-state">
