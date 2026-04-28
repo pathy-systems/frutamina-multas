@@ -32,9 +32,12 @@ load_dotenv()
 
 
 def _database_url() -> str:
+    explicit = os.getenv("USE_DATABASE", "0").strip()
+    if explicit != "1":
+        return ""
     for key in ("DATABASE_URL", "DATABASE_PUBLIC_URL", "POSTGRES_URL"):
         url = os.getenv(key, "").strip()
-        if url and "66.33.22.252" not in url:
+        if url:
             return url
     return ""
 
