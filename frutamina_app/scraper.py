@@ -103,7 +103,8 @@ async def _run_sync(callback: StatusCallback | None = None) -> list[FineRecord]:
         from playwright.async_api import async_playwright
     except Exception as exc:
         raise RuntimeError(
-            "Playwright nao esta instalado no servidor. Adicione a dependencia no deploy."
+            "Playwright nao esta instalado neste ambiente (Agente Local). "
+            "Execute 'pip install playwright' e 'playwright install chromium' na maquina onde o agente esta rodando."
         ) from exc
 
     async with async_playwright() as playwright:
@@ -306,18 +307,23 @@ async def _visible_pdf_error_message(page: "Page") -> str:
 
 
 async def _dismiss_pdf_error_modal(page: "Page") -> None:
+    # Tenta clicar em qualquer botao de fechar/OK que esteja visivel
     for selector in PDF_MODAL_BUTTON_SELECTORS:
-        locator = page.locator(selector).first
-        try:
-            if await locator.is_visible():
-                await locator.click(timeout=1000)
-                await page.wait_for_timeout(250)
-                return
-        except Exception:
-            continue
+        locators = await page.locator(selector).all()
+        for locator in locators:
+            try:
+                if await locator.is_visible():
+                    await locator.click(timeout=2000)
+                    await page.wait_for_timeout(500)
+                    # Nao retorna imediatamente, pois pode haver mais de um modal (como o usuario relatou)
+            except Exception:
+                continue
 
+    # Tenta tambem fechar via teclado como fallback
     try:
         await page.keyboard.press("Escape")
+        await page.wait_for_timeout(300)
+        await page.keyboard.press("Enter")
     except Exception:
         pass
 
@@ -440,6 +446,14 @@ async def _download_pdf_and_extract_value(
                 if download_task.done():
                     download = await download_task
                     await download.save_as(str(pdf_path))
+                    
+                    # Apos o download, o portal da ANTT costuma exibir modais de sucesso ou informativos.
+                    # O usuario relatou que "toda vez que ele baixa um pdf tem que procurar esse btn, depois que clicar aparecera outro".
+                    # Vamos tentar limpar esses modais repetidamente.
+                    for _ in range(3):
+                        await _dismiss_pdf_error_modal(page)
+                        await page.wait_for_timeout(500)
+                        
                     return _extract_pdf_value(pdf_path)
 
                 modal_error = await _visible_pdf_error_message(page)
