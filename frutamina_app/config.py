@@ -32,11 +32,11 @@ load_dotenv()
 
 
 def _database_url() -> str:
-    return (
-        os.getenv("DATABASE_URL", "")
-        or os.getenv("DATABASE_PUBLIC_URL", "")
-        or os.getenv("POSTGRES_URL", "")
-    )
+    for key in ("DATABASE_URL", "DATABASE_PUBLIC_URL", "POSTGRES_URL"):
+        url = os.getenv(key, "").strip()
+        if url and "66.33.22.252" not in url:
+            return url
+    return ""
 
 
 def _app_timezone() -> ZoneInfo:
