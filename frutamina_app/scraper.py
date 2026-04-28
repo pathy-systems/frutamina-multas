@@ -428,13 +428,16 @@ async def _download_pdf_and_extract_value(
     for attempt in range(1, PDF_DOWNLOAD_RETRIES + 1):
         row_locator = page.locator(f"{SELECTOR_TABELA_RESULTADO} tbody tr:has-text(\"{auto_infracao}\")").first
         button = row_locator.locator(
-            '[id^="Corpo_gdvResultado_btnVisualizar"], [id*="btnVisualizar"], a:has-text("Visualizar")'
+            'input[type="image"][id*="btnVisualizar"], input[type="submit"][id*="btnVisualizar"], a:has-text("Visualizar"), [id*="btnVisualizar"]'
         ).first
         download_task: asyncio.Task[object] | None = None
 
         try:
+            # Tenta capturar o download tanto por evento direto quanto por nova aba (popup)
             download_task = asyncio.create_task(page.wait_for_event("download", timeout=PDF_DOWNLOAD_TIMEOUT_MS))
-            await button.click(timeout=10000)
+            
+            # Clique forçado para garantir que o evento dispare
+            await button.click(timeout=10000, force=True)
             immediate_error = await _prepare_pdf_download(page)
             if immediate_error:
                 last_error_message = immediate_error
