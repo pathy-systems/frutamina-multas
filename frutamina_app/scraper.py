@@ -447,12 +447,33 @@ async def _download_pdf_and_extract_value(
                     download = await download_task
                     await download.save_as(str(pdf_path))
                     
-                    # Apos o download, o portal da ANTT costuma exibir modais de sucesso ou informativos.
-                    # O usuario relatou que "toda vez que ele baixa um pdf tem que procurar esse btn, depois que clicar aparecera outro".
-                    # Vamos tentar limpar esses modais repetidamente.
-                    for _ in range(3):
-                        await _dismiss_pdf_error_modal(page)
-                        await page.wait_for_timeout(500)
+                    # Lógica obrigatória solicitada pelo usuário:
+                    # Toda vez que baixar um PDF, deve procurar e clicar no botão OK/Fechar.
+                    if callback:
+                        callback(f"Download concluido para {auto_infracao}. Limpando modais obrigatórios...")
+                    
+                    # Tentamos limpar os modais por até 10 segundos ou até que nenhum botão OK esteja mais visível
+                    for attempt_ok in range(10):
+                        found_any = False
+                        for selector in PDF_MODAL_BUTTON_SELECTORS:
+                            locators = await page.locator(selector).all()
+                            for locator in locators:
+                                try:
+                                    if await locator.is_visible():
+                                        await locator.click(timeout=2000)
+                                        found_any = True
+                                        await page.wait_for_timeout(800)
+                                except Exception:
+                                    continue
+                        
+                        if not found_any:
+                            # Se não achou nenhum botão visualmente, tenta um Escape/Enter final por segurança
+                            try:
+                                await page.keyboard.press("Escape")
+                                await page.wait_for_timeout(300)
+                            except Exception:
+                                pass
+                            break
                         
                     return _extract_pdf_value(pdf_path)
 
